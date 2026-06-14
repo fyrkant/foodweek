@@ -1,0 +1,311 @@
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --line: #e3e6ea;
+  --text: #1b1f24;
+  --muted: #6b7280;
+  --accent: #1f6feb;
+  --accent-soft: #e8f0fe;
+  --red: #d92d20;
+  --red-soft: #fdecea;
+  --eve: #b45309;
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.centered {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ---- Login ---- */
+.login-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 2rem;
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.05);
+}
+.login-card h1 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+.login-card p {
+  margin: 0;
+}
+.login-card input,
+.combo input {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 1rem;
+  width: 100%;
+}
+.login-card input:focus,
+.combo input:focus {
+  outline: 2px solid var(--accent);
+  border-color: var(--accent);
+}
+.login-card button {
+  padding: 0.65rem 0.75rem;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.login-card button:disabled {
+  opacity: 0.5;
+}
+
+.error {
+  color: var(--red);
+  font-size: 0.9rem;
+}
+.error.banner {
+  background: var(--red-soft);
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  margin: 0 1rem 0.5rem;
+  cursor: pointer;
+}
+
+/* ---- App shell ---- */
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.week-info h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+.week-info .span {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.week-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.week-nav button {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 8px;
+  padding: 0.45rem 0.7rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+.week-nav .today-btn {
+  font-weight: 600;
+}
+.week-nav .logout-btn {
+  color: var(--muted);
+}
+
+/* ---- Week grid ---- */
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.6rem;
+}
+@media (max-width: 900px) {
+  .week-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .week-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.day-col {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 130px;
+}
+.day-col.is-today {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.day-col.is-red .day-weekday {
+  color: var(--red);
+}
+.day-col.is-over {
+  background: var(--accent-soft);
+}
+
+.day-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.4rem;
+}
+.day-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.day-weekday {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.day-date {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.day-holiday {
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.day-holiday.red {
+  color: var(--red);
+}
+.day-holiday.eve {
+  color: var(--eve);
+}
+
+.day-meals {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex: 1;
+}
+
+/* ---- Meal card ---- */
+.meal-card {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.35rem 0.4rem;
+}
+.meal-card.dragging {
+  background: var(--card);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+}
+.drag-handle {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: grab;
+  padding: 0 0.15rem;
+  touch-action: none;
+  letter-spacing: -2px;
+}
+.drag-handle:active {
+  cursor: grabbing;
+}
+.meal-name {
+  flex: 1;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+.meal-delete {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0 0.2rem;
+}
+.meal-delete:hover {
+  color: var(--red);
+}
+
+/* ---- Add meal ---- */
+.add-btn {
+  width: 100%;
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 0.45rem;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.add-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.combo {
+  position: relative;
+}
+.combo-list {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0.2rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.combo-list li {
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+.combo-list li.active {
+  background: var(--accent-soft);
+}
+.combo-create {
+  margin-top: 0.25rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.85rem;
+  padding: 0.3rem 0.2rem;
+}
