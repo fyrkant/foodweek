@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "foodweek",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "database_id": "a288bc1b-e64b-4f20-8aa7-73fda961c70b",
       "migrations_dir": "migrations"
     }
   ],
