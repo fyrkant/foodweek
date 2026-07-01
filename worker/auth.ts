@@ -27,8 +27,9 @@ async function sign(data: string, secret: string): Promise<string> {
   return base64url(sig);
 }
 
-/** Constant-time-ish string comparison. */
+/** Constant-time-ish string comparison. Never throws on bad input. */
 export function safeEqual(a: string, b: string): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false;
   if (a.length !== b.length) return false;
   let mismatch = 0;
   for (let i = 0; i < a.length; i++) {
