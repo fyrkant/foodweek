@@ -83,7 +83,9 @@ requires logging in.
 
 `/widget` renders this week's dinners as a small styled page with a transparent
 background, so it blends into a dashboard card. It highlights today, dims past
-days, shows Swedish holidays, and reloads itself every 10 minutes.
+days, shows Swedish holidays, and reloads itself every 10 minutes. The ‹ and ›
+buttons move between weeks; when another week is showing, it returns to the
+current week after 2 minutes.
 
 Add a **Webpage** card to the dashboard with the URL
 `https://<your-worker-domain>/widget`. A 7-day week needs roughly 340 px of
@@ -94,6 +96,8 @@ Options (query parameters):
 - `theme=light` or `theme=dark` to force a colour scheme. By default it follows
   the device's setting.
 - `week=1` shows next week (`week=-1` shows last week).
+- `accent=FF9F0A` sets the highlight colour (hex, without `#`) to match your
+  dashboard.
 
 `/widget` is listed in `assets.run_worker_first` in `wrangler.jsonc`. Without
 that, Cloudflare answers browser page loads with the app's `index.html`
