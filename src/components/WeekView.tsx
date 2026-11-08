@@ -13,7 +13,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { api, type Meal } from "../api";
+import { api, type Dish, type DishChoice, type Meal } from "../api";
 import {
   addDays,
   formatSpan,
@@ -51,7 +51,7 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
   const days = useMemo(() => weekDays(monday), [monday]);
 
   const [byDay, setByDay] = useState<MealsByDay>(() => group(days, []));
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<Dish[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,8 +76,8 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     api
-      .getDinners()
-      .then((r) => setSuggestions(r.dinners))
+      .getDishes()
+      .then((r) => setSuggestions(r.dishes))
       .catch(() => {});
   }, []);
 
@@ -163,12 +163,14 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
     });
   }
 
-  async function handleAdd(date: DateStr, name: string) {
+  async function handleAdd(date: DateStr, dish: DishChoice) {
     try {
-      const { meal } = await api.addMeal(date, name);
+      const { meal } = await api.addMeal(date, dish);
       setByDay((prev) => ({ ...prev, [date]: [...prev[date], meal] }));
       setSuggestions((prev) =>
-        prev.some((s) => s.toLowerCase() === name.toLowerCase()) ? prev : [name, ...prev],
+        prev.some((s) => s.id === meal.dish_id)
+          ? prev
+          : [{ id: meal.dish_id, name: meal.name }, ...prev],
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Kunde inte lägga till");

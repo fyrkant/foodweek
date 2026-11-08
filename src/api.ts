@@ -1,9 +1,18 @@
 export interface Meal {
   id: number;
   date: string; // YYYY-MM-DD
+  dish_id: string;
   name: string;
   sort_order: number;
 }
+
+export interface Dish {
+  id: string; // UUID
+  name: string;
+}
+
+/** An existing dish by id, or a new one by name. */
+export type DishChoice = { dishId: string } | { name: string };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -33,11 +42,11 @@ export const api = {
 
   getMeals: (start: string, end: string) =>
     req<{ meals: Meal[] }>(`/meals?start=${start}&end=${end}`),
-  addMeal: (date: string, name: string) =>
-    req<{ meal: Meal }>("/meals", { method: "POST", body: JSON.stringify({ date, name }) }),
+  addMeal: (date: string, dish: DishChoice) =>
+    req<{ meal: Meal }>("/meals", { method: "POST", body: JSON.stringify({ date, ...dish }) }),
   deleteMeal: (id: number) => req<{ ok: true }>(`/meals/${id}`, { method: "DELETE" }),
   reorder: (meals: { id: number; date: string; sort_order: number }[]) =>
     req<{ ok: true }>("/meals/reorder", { method: "POST", body: JSON.stringify({ meals }) }),
 
-  getDinners: () => req<{ dinners: string[] }>("/dinners"),
+  getDishes: () => req<{ dishes: Dish[] }>("/dishes"),
 };
