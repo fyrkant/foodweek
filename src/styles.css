@@ -309,3 +309,108 @@ button {
   font-size: 0.85rem;
   padding: 0.3rem 0.2rem;
 }
+
+/* Meal name doubles as the button that opens the dish sheet. */
+button.meal-name {
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 0;
+  min-width: 0;
+}
+button.meal-name:hover {
+  color: var(--accent);
+}
+.meal-notes {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meal-recipe {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 700;
+  padding: 0 0.2rem;
+}
+
+/* ---- Dish sheet ---- */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 10;
+}
+.sheet {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+.sheet label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.sheet input,
+.sheet textarea {
+  font: inherit;
+  font-weight: 400;
+  font-size: 1rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  width: 100%;
+  resize: vertical;
+}
+.sheet input:focus,
+.sheet textarea:focus {
+  outline: 2px solid var(--accent);
+  border-color: var(--accent);
+}
+.sheet-open {
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  margin-top: -0.4rem;
+}
+.sheet-hint {
+  margin: 0;
+  font-size: 0.8rem;
+}
+.sheet .error {
+  margin: 0;
+}
+.sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.sheet-actions button {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+}
+.sheet-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.sheet-actions button:disabled {
+  opacity: 0.5;
+}

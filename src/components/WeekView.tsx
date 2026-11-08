@@ -13,7 +13,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { api, type Dish, type DishChoice, type Meal } from "../api";
+import { api, type Dish, type DishChoice, type DishPatch, type Meal } from "../api";
 import {
   addDays,
   formatSpan,
@@ -24,6 +24,7 @@ import {
   type DateStr,
 } from "../dates";
 import DayColumn from "./DayColumn";
+import DishSheet from "./DishSheet";
 
 type MealsByDay = Record<DateStr, Meal[]>;
 
@@ -53,6 +54,7 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
   const [byDay, setByDay] = useState<MealsByDay>(() => group(days, []));
   const [suggestions, setSuggestions] = useState<Dish[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Dish | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sensors = useSensors(
@@ -170,11 +172,31 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
       setSuggestions((prev) =>
         prev.some((s) => s.id === meal.dish_id)
           ? prev
-          : [{ id: meal.dish_id, name: meal.name }, ...prev],
+          : [
+              { id: meal.dish_id, name: meal.name, recipe_url: meal.recipe_url, notes: meal.notes },
+              ...prev,
+            ],
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Kunde inte lägga till");
     }
+  }
+
+  function handleEdit(meal: Meal) {
+    setEditing({ id: meal.dish_id, name: meal.name, recipe_url: meal.recipe_url, notes: meal.notes });
+  }
+
+  async function handleSaveDish(id: string, patch: DishPatch) {
+    const { dish } = await api.updateDish(id, patch);
+    const details = { name: dish.name, recipe_url: dish.recipe_url, notes: dish.notes };
+    setByDay((cur) => {
+      const copy: MealsByDay = {};
+      for (const d of days) {
+        copy[d] = cur[d].map((m) => (m.dish_id === dish.id ? { ...m, ...details } : m));
+      }
+      return copy;
+    });
+    setSuggestions((prev) => prev.map((s) => (s.id === dish.id ? dish : s)));
   }
 
   async function handleDelete(id: number) {
@@ -245,6 +267,7 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
               today={today}
               suggestions={suggestions}
               onAdd={handleAdd}
+              onEdit={handleEdit}
               onDelete={handleDelete}
             />
           ))}
@@ -259,6 +282,14 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
           ) : null}
         </DragOverlay>
       </DndContext>
+
+      {editing && (
+        <DishSheet
+          dish={editing}
+          onSave={(patch) => handleSaveDish(editing.id, patch)}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }

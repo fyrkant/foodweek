@@ -12,6 +12,7 @@ export default function DayColumn({
   today,
   suggestions,
   onAdd,
+  onEdit,
   onDelete,
 }: {
   date: DateStr;
@@ -19,6 +20,7 @@ export default function DayColumn({
   today: DateStr;
   suggestions: Dish[];
   onAdd: (date: DateStr, dish: DishChoice) => void;
+  onEdit: (meal: Meal) => void;
   onDelete: (id: number) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: date });
@@ -50,7 +52,7 @@ export default function DayColumn({
       >
         <div className="day-meals">
           {meals.map((m) => (
-            <MealCard key={m.id} meal={m} onDelete={onDelete} />
+            <MealCard key={m.id} meal={m} onEdit={onEdit} onDelete={onDelete} />
           ))}
         </div>
       </SortableContext>

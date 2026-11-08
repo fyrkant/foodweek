@@ -7,6 +7,8 @@ export interface FeedMeal {
   id: number;
   date: string; // YYYY-MM-DD
   name: string;
+  recipe_url: string | null;
+  notes: string | null;
 }
 
 function escapeText(s: string): string {
@@ -68,8 +70,11 @@ export function buildCalendar(meals: FeedMeal[], host: string): string {
       `DTEND;VALUE=DATE:${compactDate(nextDay(meal.date))}`,
       `SUMMARY:${escapeText(meal.name)}`,
       "TRANSP:TRANSPARENT",
-      "END:VEVENT",
     );
+    if (meal.recipe_url) lines.push(`URL:${meal.recipe_url}`);
+    const description = [meal.notes, meal.recipe_url].filter(Boolean).join("\n\n");
+    if (description) lines.push(`DESCRIPTION:${escapeText(description)}`);
+    lines.push("END:VEVENT");
   }
   lines.push("END:VCALENDAR");
   return lines.map(fold).join("\r\n") + "\r\n";

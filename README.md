@@ -22,6 +22,8 @@ are highlighted on each day.
 - Each day has a full-width **+** button → autocomplete input. Pick an existing
   dinner or type a new one and create it on the fly.
 - Drag a meal by its handle to reorder within a day or move it to another day.
+- Tap a dinner to edit its name, recipe link and notes. Details belong to the
+  dish, so they show up on every day it's planned. A ↗ icon opens the recipe.
 - Swedish red days and notable eves (julafton, midsommarafton, …) are labelled
   and styled.
 - Read-only **calendar feed** (ICS) so the plan shows up in Home Assistant or a
@@ -88,7 +90,8 @@ requires logging in.
 
 `/widget` renders this week's dinners as a small styled page with a transparent
 background, so it blends into a dashboard card. It highlights today, dims past
-days, shows Swedish holidays, and reloads itself every 10 minutes. The ‹ and ›
+days, shows Swedish holidays, and reloads itself every 10 minutes. Dinners with
+a recipe link are tappable and open the recipe in a new window. The ‹ and ›
 buttons move between weeks; when another week is showing, it returns to the
 current week after 2 minutes.
 
@@ -152,7 +155,8 @@ src/               React app
 
 ## Data model
 
-- `dishes(id, name, uses, created_at)`: every dish that has been entered, with
-  a UUID `id`. Names are unique, ignoring case. This powers autocomplete.
+- `dishes(id, name, uses, recipe_url, notes, created_at)`: every dish that has
+  been entered, with a UUID `id`. Names are unique, ignoring case. This powers
+  autocomplete.
 - `meals(id, date, dish_id, sort_order, created_at)`: a dish planned for a day.
   It references `dishes.id`, so renaming a dish updates every day it's planned.

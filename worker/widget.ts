@@ -21,6 +21,7 @@ export type WidgetTheme = "auto" | "light" | "dark";
 export interface WidgetMeal {
   date: DateStr;
   name: string;
+  recipe_url: string | null;
 }
 
 /** Today's date in Sweden, regardless of where the Worker runs. */
@@ -90,10 +91,10 @@ export function renderWidget(opts: {
   const { days, meals, today, theme, accent, offset, refreshSeconds, returnSeconds } = opts;
   const monday = parseDate(days[0]);
 
-  const byDate = new Map<DateStr, string[]>();
+  const byDate = new Map<DateStr, WidgetMeal[]>();
   for (const m of meals) {
     const list = byDate.get(m.date) ?? [];
-    list.push(m.name);
+    list.push(m);
     byDate.set(m.date, list);
   }
 
@@ -102,14 +103,20 @@ export function renderWidget(opts: {
       const d = parseDate(date);
       const weekday = WEEKDAYS_SV[(d.getUTCDay() + 6) % 7].slice(0, 3);
       const holiday = holidayFor(date);
-      const names = byDate.get(date) ?? [];
+      const dayMeals = byDate.get(date) ?? [];
       const classes = ["day"];
       if (date === today) classes.push("today");
       if (date < today) classes.push("past");
       if (holiday?.red) classes.push("red");
 
-      const dinners = names.length
-        ? names.map((n) => `<div class="dinner">${esc(n)}</div>`).join("")
+      const dinners = dayMeals.length
+        ? dayMeals
+            .map((m) =>
+              m.recipe_url
+                ? `<a class="dinner recipe" href="${esc(m.recipe_url)}" target="_blank" rel="noopener noreferrer">${esc(m.name)}<span class="go" aria-label="Recept">↗</span></a>`
+                : `<div class="dinner">${esc(m.name)}</div>`,
+            )
+            .join("")
         : `<div class="dinner empty">–</div>`;
       const holidayHtml = holiday
         ? `<div class="holiday ${holiday.red ? "is-red" : "is-eve"}">${esc(holiday.name)}</div>`
@@ -200,6 +207,9 @@ ul { list-style: none; margin: 0; padding: 0; }
 .dinner { line-height: 1.35; overflow-wrap: anywhere; }
 .dinner + .dinner { margin-top: 2px; }
 .dinner.empty { color: var(--muted); }
+a.dinner { display: block; color: inherit; text-decoration: none; -webkit-tap-highlight-color: transparent; }
+a.dinner:active { opacity: 0.6; }
+.go { color: var(--accent); font-size: 0.8em; font-weight: 700; margin-left: 0.3em; }
 .holiday { font-size: 0.75rem; font-weight: 600; margin-bottom: 1px; }
 .holiday.is-red { color: var(--red); }
 .holiday.is-eve { color: var(--eve); }
