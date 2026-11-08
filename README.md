@@ -26,6 +26,8 @@ are highlighted on each day.
   and styled.
 - Read-only **calendar feed** (ICS) so the plan shows up in Home Assistant or a
   phone calendar.
+- Read-only **widget page** (`/widget`) with this week's dinners, made for
+  embedding in a Home Assistant dashboard.
 
 ## Local development
 
@@ -74,6 +76,31 @@ Then open the printed local URL and log in with the `APP_PASSWORD` from `.dev.va
 
 ## Home Assistant
 
+There are two public, read-only ways to show the plan. Changing anything still
+requires logging in.
+
+### Widget (Webpage card)
+
+`/widget` renders this week's dinners as a small styled page with a transparent
+background, so it blends into a dashboard card. It highlights today, dims past
+days, shows Swedish holidays, and reloads itself every 10 minutes.
+
+Add a **Webpage** card to the dashboard with the URL
+`https://<your-worker-domain>/widget`. A 7-day week needs roughly 340 px of
+height, so set the card's aspect ratio to about `90%`.
+
+Options (query parameters):
+
+- `theme=light` or `theme=dark` to force a colour scheme. By default it follows
+  the device's setting.
+- `week=1` shows next week (`week=-1` shows last week).
+
+`/widget` is listed in `assets.run_worker_first` in `wrangler.jsonc`. Without
+that, Cloudflare answers browser page loads with the app's `index.html`
+before the Worker runs.
+
+### Calendar feed
+
 The Worker exposes the planned dinners as an iCalendar feed. Each dinner is an
 all-day event; the feed covers 8 weeks back and 26 weeks ahead.
 
@@ -105,6 +132,7 @@ worker/            Cloudflare Worker (Hono API + static asset serving)
   index.ts         Routes: /api/login, /api/meals, /api/dinners, ...
   auth.ts          Signed-cookie session helpers (Web Crypto HMAC)
   ical.ts          iCalendar writer for the calendar feed
+  widget.ts        Server-rendered week widget for dashboards
 migrations/        D1 SQL migrations
 src/               React app
   components/       WeekView, DayColumn, MealCard, AddMeal, Login
