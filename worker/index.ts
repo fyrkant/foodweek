@@ -9,7 +9,7 @@ import {
   verifySessionToken,
 } from "./auth";
 import { buildCalendar, type FeedMeal } from "./ical";
-import { renderWidget, stockholmToday, widgetWeek, type WidgetTheme } from "./widget";
+import { parseAccent, renderWidget, stockholmToday, widgetWeek, type WidgetTheme } from "./widget";
 
 interface Env {
   DB: D1Database;
@@ -287,10 +287,12 @@ app.route("/api", api);
 // Public, read-only week view for embedding (Home Assistant Webpage card).
 // Must be listed in assets.run_worker_first in wrangler.jsonc, otherwise
 // browser navigations get the SPA's index.html instead.
-// ?theme=light|dark (default: follows the system), ?week=1 for next week.
+// ?theme=light|dark (default: follows the system), ?week=1 for next week,
+// ?accent=FF9F0A to match a dashboard's accent colour.
 app.get("/widget", async (c) => {
   const themeParam = c.req.query("theme");
   const theme: WidgetTheme = themeParam === "light" || themeParam === "dark" ? themeParam : "auto";
+  const accent = parseAccent(c.req.query("accent"));
   const offset = Math.max(-52, Math.min(52, Math.trunc(Number(c.req.query("week") ?? 0)) || 0));
 
   const today = stockholmToday();
@@ -302,7 +304,16 @@ app.get("/widget", async (c) => {
       .bind(days[0], days[6])
       .all<{ date: string; name: string }>();
     log("widget_ok", { start: days[0], count: results.length });
-    return c.html(renderWidget({ days, meals: results, today, theme, refreshSeconds: 600 }), 200, {
+    return c.html(renderWidget({
+        days,
+        meals: results,
+        today,
+        theme,
+        accent,
+        offset,
+        refreshSeconds: 600,
+        returnSeconds: 120,
+      }), 200, {
       "Cache-Control": "no-store",
     });
   } catch (err) {

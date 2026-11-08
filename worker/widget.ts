@@ -58,6 +58,17 @@ const DARK = `
   --red: #ff7b6e;
   --eve: #f0a75a;`;
 
+/** Parses a 6-digit hex colour ("FF9F0A" or "#FF9F0A"); anything else is ignored. */
+export function parseAccent(value: string | undefined): string | undefined {
+  const hex = value?.replace(/^#/, "");
+  return hex && /^[0-9a-fA-F]{6}$/.test(hex) ? hex.toLowerCase() : undefined;
+}
+
+function accentCss(hex: string): string {
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return `:root {\n  --accent: #${hex};\n  --today: rgba(${r}, ${g}, ${b}, 0.18);\n}`;
+}
+
 function themeCss(theme: WidgetTheme): string {
   if (theme === "light") return `:root {${LIGHT}\n}`;
   if (theme === "dark") return `:root {${DARK}\n}`;
@@ -69,9 +80,14 @@ export function renderWidget(opts: {
   meals: WidgetMeal[];
   today: DateStr;
   theme: WidgetTheme;
+  accent?: string;
+  /** Weeks from the current one; 0 is this week. */
+  offset: number;
   refreshSeconds: number;
+  /** When showing another week, jump back to the current one after this long. */
+  returnSeconds: number;
 }): string {
-  const { days, meals, today, theme, refreshSeconds } = opts;
+  const { days, meals, today, theme, accent, offset, refreshSeconds, returnSeconds } = opts;
   const monday = parseDate(days[0]);
 
   const byDate = new Map<DateStr, string[]>();
@@ -106,6 +122,17 @@ export function renderWidget(opts: {
     })
     .join("\n");
 
+  const href = (week: number) => {
+    const params = new URLSearchParams();
+    if (theme !== "auto") params.set("theme", theme);
+    if (accent) params.set("accent", accent);
+    if (week !== 0) params.set("week", String(week));
+    const qs = params.toString();
+    return esc(qs ? `/widget?${qs}` : "/widget");
+  };
+  const refresh =
+    offset === 0 ? String(refreshSeconds) : `${returnSeconds}; url=${href(0)}`;
+
   const todayDate = parseDate(today);
   const title = `Vecka ${isoWeekNumber(monday)}`;
   const label = `Middagar ${title.toLowerCase()}, ${todayDate.getUTCDate()} ${MONTHS_SV[todayDate.getUTCMonth()]}`;
@@ -115,10 +142,11 @@ export function renderWidget(opts: {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="${refreshSeconds}">
+<meta http-equiv="refresh" content="${refresh}">
 <title>${esc(label)}</title>
 <style>
 ${themeCss(theme)}
+${accent ? accentCss(accent) : ""}
 * { box-sizing: border-box; }
 html, body {
   margin: 0;
@@ -128,9 +156,27 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 body { padding: 12px 14px; }
-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
-h1 { margin: 0; font-size: 1.05rem; font-weight: 650; }
-.span { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+h1 { margin: 0; font-size: 1.05rem; font-weight: 650; line-height: 1.2; }
+.span { display: block; color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+nav { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+nav a {
+  display: inline-grid;
+  place-items: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 17px;
+  background: var(--line);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  -webkit-tap-highlight-color: transparent;
+}
+nav a:active { opacity: 0.6; }
+nav a.arrow { padding: 0; font-size: 1.2rem; line-height: 1; }
+nav a.now { color: var(--accent); }
 ul { list-style: none; margin: 0; padding: 0; }
 .day {
   display: grid;
@@ -159,7 +205,14 @@ ul { list-style: none; margin: 0; padding: 0; }
 </style>
 </head>
 <body>
-<header><h1>${title}</h1><span class="span">${esc(formatSpan(monday))}</span></header>
+<header>
+  <div><h1>${title}</h1><span class="span">${esc(formatSpan(monday))}</span></div>
+  <nav>
+    ${offset !== 0 ? `<a class="now" href="${href(0)}">Idag</a>` : ""}
+    <a class="arrow" href="${href(offset - 1)}" aria-label="Föregående vecka">‹</a>
+    <a class="arrow" href="${href(offset + 1)}" aria-label="Nästa vecka">›</a>
+  </nav>
+</header>
 <ul>
 ${rows}
 </ul>
