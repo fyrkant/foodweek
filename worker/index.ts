@@ -1,4 +1,5 @@
-import { Hono } from "hono";
+import { OAuthProvider, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import { Hono, type Context } from "hono";
 import {
   SESSION_COOKIE,
   clearSessionCookie,
@@ -8,14 +9,32 @@ import {
   sessionCookie,
   verifySessionToken,
 } from "./auth";
-import { buildCalendar, type FeedMeal } from "./ical";
+import {
+  InputError,
+  addMeal,
+  deleteMeal,
+  getMeals,
+  isValidDate,
+  listDishes,
+  setPositions,
+  updateDish,
+  type DishPatch,
+} from "./db";
+import { buildCalendar } from "./ical";
+import { handleMcp } from "./mcp";
+import { handleAuthorize } from "./oauth";
 import { parseAccent, renderWidget, stockholmToday, widgetWeek, type WidgetTheme } from "./widget";
 
 interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  OAUTH_KV: KVNamespace;
+  /** Injected by OAuthProvider into the default handler. */
+  OAUTH_PROVIDER: OAuthHelpers;
   APP_PASSWORD: string;
   SESSION_SECRET: string;
+  /** Canonical origin, e.g. https://foodweek.example.workers.dev; the MCP resource is PUBLIC_URL/mcp. */
+  PUBLIC_URL: string;
 }
 
 type Variables = Record<string, never>;
@@ -133,12 +152,7 @@ api.get("/calendar.ics", async (c) => {
   const start = new Date(now - FEED_WEEKS_BACK * 7 * day).toISOString().slice(0, 10);
   const end = new Date(now + FEED_WEEKS_AHEAD * 7 * day).toISOString().slice(0, 10);
   try {
-    const { results } = await c.env.DB.prepare(
-      `SELECT m.id, m.date, d.name, d.recipe_url, d.notes FROM meals m JOIN dishes d ON d.id = m.dish_id
-       WHERE m.date >= ? AND m.date <= ? ORDER BY m.date, m.sort_order, m.id`,
-    )
-      .bind(start, end)
-      .all<FeedMeal>();
+    const results = await getMeals(c.env.DB, start, end);
     log("calendar_ok", { count: results.length });
     return c.body(buildCalendar(results, new URL(c.req.url).hostname), 200, {
       "Content-Type": "text/calendar; charset=utf-8",
@@ -167,47 +181,25 @@ api.use("/*", async (c, next) => {
 
 // --- Meals --------------------------------------------------------------
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const MEAL_COLUMNS = "m.id, m.date, m.dish_id, d.name, d.recipe_url, d.notes, m.sort_order";
-const DISH_COLUMNS = "id, name, recipe_url, notes";
-const MAX_NAME = 200;
-const MAX_URL = 2000;
-const MAX_NOTES = 4000;
-
-/** Absolute http(s) URL, or undefined if the value isn't one. */
-function normalizeUrl(value: string): string | undefined {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : undefined;
-  } catch {
-    return undefined;
+function inputErrorResponse(c: Context, err: unknown, event: string, data?: Record<string, unknown>) {
+  if (err instanceof InputError) {
+    log(event + "_rejected", { ...data, reason: err.message });
+    return c.json({ error: err.message }, err.status);
   }
-}
-
-interface DishRow {
-  id: string;
-  name: string;
-  recipe_url: string | null;
-  notes: string | null;
+  return undefined;
 }
 
 api.get("/meals", async (c) => {
   const start = c.req.query("start");
   const end = c.req.query("end");
-  if (!start || !end || !DATE_RE.test(start) || !DATE_RE.test(end)) {
+  if (!isValidDate(start) || !isValidDate(end)) {
     log("meals_get_bad_request", { start, end });
     return c.json({ error: "Ogiltigt datumintervall" }, 400);
   }
   try {
-    const { results } = await c.env.DB.prepare(
-      `SELECT ${MEAL_COLUMNS} FROM meals m JOIN dishes d ON d.id = m.dish_id
-       WHERE m.date >= ? AND m.date <= ? ORDER BY m.date, m.sort_order, m.id`,
-    )
-      .bind(start, end)
-      .all();
-    log("meals_get_ok", { start, end, count: results.length });
-    return c.json({ meals: results });
+    const meals = await getMeals(c.env.DB, start, end);
+    log("meals_get_ok", { start, end, count: meals.length });
+    return c.json({ meals });
   } catch (err) {
     logError("meals_get_failed", err, { start, end });
     return c.json({ error: "Kunde inte hämta middagar" }, 500);
@@ -216,70 +208,30 @@ api.get("/meals", async (c) => {
 
 api.post("/meals", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
-    date?: string;
-    dishId?: string;
-    name?: string;
+    date?: unknown;
+    dishId?: unknown;
+    name?: unknown;
   };
-  const date = body.date?.trim();
-  const dishId = body.dishId?.trim().toLowerCase();
-  const name = body.name?.trim();
-  if (!date || !DATE_RE.test(date) || !(dishId ? UUID_RE.test(dishId) : name)) {
-    log("meals_post_bad_request", { date, dishId, hasName: Boolean(name) });
+  const date = typeof body.date === "string" ? body.date.trim() : "";
+  const choice =
+    typeof body.dishId === "string"
+      ? { dishId: body.dishId }
+      : typeof body.name === "string"
+        ? { name: body.name }
+        : undefined;
+  if (!choice) {
+    log("meals_post_bad_request", { date });
     return c.json({ error: "Datum och maträtt krävs" }, 400);
   }
-
   try {
-    // Resolve the dish: by id, else by name (case-insensitive), else create it.
-    let dish = dishId
-      ? await c.env.DB.prepare(`SELECT ${DISH_COLUMNS} FROM dishes WHERE id = ?`)
-          .bind(dishId)
-          .first<DishRow>()
-      : await c.env.DB.prepare(`SELECT ${DISH_COLUMNS} FROM dishes WHERE name = ?`)
-          .bind(name)
-          .first<DishRow>();
-    if (!dish && dishId) {
-      log("meals_post_unknown_dish", { dishId });
-      return c.json({ error: "Okänd maträtt" }, 404);
-    }
-    if (!dish) {
-      dish = await c.env.DB.prepare(
-        `INSERT INTO dishes (id, name) VALUES (?, ?)
-         ON CONFLICT (name) DO UPDATE SET name = name
-         RETURNING ${DISH_COLUMNS}`,
-      )
-        .bind(crypto.randomUUID(), name)
-        .first<DishRow>();
-      if (!dish) throw new Error("dish upsert returned no row");
-    }
-
-    const row = await c.env.DB.prepare(
-      "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM meals WHERE date = ?",
-    )
-      .bind(date)
-      .first<{ next: number }>();
-    const sortOrder = row?.next ?? 0;
-
-    const [inserted] = await c.env.DB.batch<{ id: number }>([
-      c.env.DB.prepare(
-        "INSERT INTO meals (date, dish_id, sort_order) VALUES (?, ?, ?) RETURNING id",
-      ).bind(date, dish.id, sortOrder),
-      c.env.DB.prepare("UPDATE dishes SET uses = uses + 1 WHERE id = ?").bind(dish.id),
-    ]);
-    const meal = {
-      id: inserted.results[0].id,
-      date,
-      dish_id: dish.id,
-      name: dish.name,
-      recipe_url: dish.recipe_url,
-      notes: dish.notes,
-      sort_order: sortOrder,
-    };
-
-    log("meals_post_ok", { date, dishId: dish.id });
+    const meal = await addMeal(c.env.DB, date, choice);
+    log("meals_post_ok", { date, dishId: meal.dish_id });
     return c.json({ meal }, 201);
   } catch (err) {
-    logError("meals_post_failed", err, { date, dishId, name });
-    return c.json({ error: "Kunde inte spara middagen" }, 500);
+    return (
+      inputErrorResponse(c, err, "meals_post", { date }) ??
+      (logError("meals_post_failed", err, { date }), c.json({ error: "Kunde inte spara middagen" }, 500))
+    );
   }
 });
 
@@ -287,7 +239,7 @@ api.delete("/meals/:id", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "Ogiltigt id" }, 400);
   try {
-    await c.env.DB.prepare("DELETE FROM meals WHERE id = ?").bind(id).run();
+    await deleteMeal(c.env.DB, id);
     log("meals_delete_ok", { id });
     return c.json({ ok: true });
   } catch (err) {
@@ -304,17 +256,10 @@ api.post("/meals/reorder", async (c) => {
   if (!Array.isArray(items)) return c.json({ error: "Ogiltig data" }, 400);
 
   const valid = items.filter(
-    (m) =>
-      Number.isInteger(m.id) &&
-      typeof m.date === "string" &&
-      DATE_RE.test(m.date) &&
-      Number.isInteger(m.sort_order),
+    (m) => Number.isInteger(m.id) && isValidDate(m.date) && Number.isInteger(m.sort_order),
   );
-  if (valid.length === 0) return c.json({ ok: true });
-
   try {
-    const stmt = c.env.DB.prepare("UPDATE meals SET date = ?, sort_order = ? WHERE id = ?");
-    await c.env.DB.batch(valid.map((m) => stmt.bind(m.date, m.sort_order, m.id)));
+    await setPositions(c.env.DB, valid);
     log("meals_reorder_ok", { count: valid.length });
     return c.json({ ok: true });
   } catch (err) {
@@ -327,11 +272,9 @@ api.post("/meals/reorder", async (c) => {
 
 api.get("/dishes", async (c) => {
   try {
-    const { results } = await c.env.DB.prepare(
-      `SELECT ${DISH_COLUMNS} FROM dishes ORDER BY uses DESC, name ASC`,
-    ).all<DishRow>();
-    log("dishes_get_ok", { count: results.length });
-    return c.json({ dishes: results });
+    const dishes = await listDishes(c.env.DB);
+    log("dishes_get_ok", { count: dishes.length });
+    return c.json({ dishes });
   } catch (err) {
     logError("dishes_get_failed", err);
     return c.json({ error: "Kunde inte hämta maträtter" }, 500);
@@ -340,57 +283,17 @@ api.get("/dishes", async (c) => {
 
 // Edit a dish. Fields left out are unchanged; an empty recipe_url/notes clears it.
 api.patch("/dishes/:id", async (c) => {
-  const id = c.req.param("id").toLowerCase();
-  if (!UUID_RE.test(id)) return c.json({ error: "Ogiltigt id" }, 400);
-  const body = (await c.req.json().catch(() => ({}))) as {
-    name?: unknown;
-    recipe_url?: unknown;
-    notes?: unknown;
-  };
-
-  const sets: string[] = [];
-  const values: (string | null)[] = [];
-  if (body.name !== undefined) {
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!name || name.length > MAX_NAME) return c.json({ error: "Ogiltigt namn" }, 400);
-    sets.push("name = ?");
-    values.push(name);
-  }
-  if (body.recipe_url !== undefined) {
-    const raw = typeof body.recipe_url === "string" ? body.recipe_url.trim() : "";
-    let url: string | null = null;
-    if (raw) {
-      const normalized = raw.length <= MAX_URL ? normalizeUrl(raw) : undefined;
-      if (!normalized) return c.json({ error: "Länken måste börja med http:// eller https://" }, 400);
-      url = normalized;
-    }
-    sets.push("recipe_url = ?");
-    values.push(url);
-  }
-  if (body.notes !== undefined) {
-    const notes = typeof body.notes === "string" ? body.notes.trim() : "";
-    if (notes.length > MAX_NOTES) return c.json({ error: "Anteckningen är för lång" }, 400);
-    sets.push("notes = ?");
-    values.push(notes || null);
-  }
-  if (sets.length === 0) return c.json({ error: "Inget att ändra" }, 400);
-
+  const id = c.req.param("id");
+  const body = (await c.req.json().catch(() => ({}))) as DishPatch;
   try {
-    const dish = await c.env.DB.prepare(
-      `UPDATE dishes SET ${sets.join(", ")} WHERE id = ? RETURNING ${DISH_COLUMNS}`,
-    )
-      .bind(...values, id)
-      .first<DishRow>();
-    if (!dish) return c.json({ error: "Okänd maträtt" }, 404);
-    log("dish_patch_ok", { id, fields: sets.length });
+    const dish = await updateDish(c.env.DB, id, body);
+    log("dish_patch_ok", { id });
     return c.json({ dish });
   } catch (err) {
-    if (err instanceof Error && /UNIQUE/i.test(err.message)) {
-      log("dish_patch_conflict", { id });
-      return c.json({ error: "Det finns redan en maträtt med det namnet" }, 409);
-    }
-    logError("dish_patch_failed", err, { id });
-    return c.json({ error: "Kunde inte spara maträtten" }, 500);
+    return (
+      inputErrorResponse(c, err, "dish_patch", { id }) ??
+      (logError("dish_patch_failed", err, { id }), c.json({ error: "Kunde inte spara maträtten" }, 500))
+    );
   }
 });
 
@@ -410,12 +313,7 @@ app.get("/widget", async (c) => {
   const today = stockholmToday();
   const days = widgetWeek(today, offset);
   try {
-    const { results } = await c.env.DB.prepare(
-      `SELECT m.date, d.name, d.recipe_url FROM meals m JOIN dishes d ON d.id = m.dish_id
-       WHERE m.date >= ? AND m.date <= ? ORDER BY m.date, m.sort_order, m.id`,
-    )
-      .bind(days[0], days[6])
-      .all<{ date: string; name: string; recipe_url: string | null }>();
+    const results = await getMeals(c.env.DB, days[0], days[6]);
     log("widget_ok", { start: days[0], count: results.length });
     return c.html(renderWidget({
         days,
@@ -435,7 +333,60 @@ app.get("/widget", async (c) => {
   }
 });
 
+// OAuth consent page for MCP clients such as Claude.
+app.on(["GET", "POST"], "/authorize", (c) =>
+  handleAuthorize(c.req.raw, c.env.OAUTH_PROVIDER, c.env.APP_PASSWORD),
+);
+
 // Everything else: serve the static SPA assets.
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
-export default app;
+// --- MCP, behind OAuth --------------------------------------------------
+
+const mcpHandler = {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const start = Date.now();
+    try {
+      const response = await handleMcp(request, env.DB);
+      log("mcp", { method: request.method, status: response.status, ms: Date.now() - start });
+      return response;
+    } catch (err) {
+      logError("mcp_failed", err, { method: request.method });
+      return Response.json({ error: "Serverfel" }, { status: 500 });
+    }
+  },
+};
+
+let provider: { origin: string; instance: OAuthProvider<Env> } | undefined;
+
+/** OAuthProvider needs the canonical public origin, which comes from env. */
+function oauthProvider(env: Env): OAuthProvider<Env> {
+  const origin = new URL(env.PUBLIC_URL).origin;
+  if (provider?.origin !== origin) {
+    provider = {
+      origin,
+      instance: new OAuthProvider<Env>({
+        apiRoute: "/mcp",
+        apiHandler: mcpHandler,
+        defaultHandler: app as unknown as ExportedHandler<Env>,
+        authorizeEndpoint: "/authorize",
+        tokenEndpoint: "/token",
+        clientRegistrationEndpoint: "/register",
+        clientIdMetadataDocumentEnabled: true,
+        scopesSupported: ["dinners"],
+        requiredScopes: ["dinners"],
+        resourceMetadata: {
+          resource: `${origin}/mcp`,
+          authorization_servers: [origin],
+        },
+      }),
+    };
+  }
+  return provider.instance;
+}
+
+export default {
+  fetch(request, env, ctx) {
+    return oauthProvider(env).fetch(request, env, ctx);
+  },
+} satisfies ExportedHandler<Env>;
