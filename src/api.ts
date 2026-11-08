@@ -3,13 +3,20 @@ export interface Meal {
   date: string; // YYYY-MM-DD
   dish_id: string;
   name: string;
+  recipe_url: string | null;
+  notes: string | null;
   sort_order: number;
 }
 
 export interface Dish {
   id: string; // UUID
   name: string;
+  recipe_url: string | null;
+  notes: string | null;
 }
+
+/** Fields to change on a dish; an empty string clears recipe_url/notes. */
+export type DishPatch = Partial<{ name: string; recipe_url: string; notes: string }>;
 
 /** An existing dish by id, or a new one by name. */
 export type DishChoice = { dishId: string } | { name: string };
@@ -49,4 +56,6 @@ export const api = {
     req<{ ok: true }>("/meals/reorder", { method: "POST", body: JSON.stringify({ meals }) }),
 
   getDishes: () => req<{ dishes: Dish[] }>("/dishes"),
+  updateDish: (id: string, patch: DishPatch) =>
+    req<{ dish: Dish }>(`/dishes/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
 };

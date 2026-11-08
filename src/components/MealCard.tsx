@@ -4,9 +4,11 @@ import type { Meal } from "../api";
 
 export default function MealCard({
   meal,
+  onEdit,
   onDelete,
 }: {
   meal: Meal;
+  onEdit: (meal: Meal) => void;
   onDelete: (id: number) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -28,7 +30,22 @@ export default function MealCard({
       >
         ⋮⋮
       </button>
-      <span className="meal-name">{meal.name}</span>
+      <button className="meal-name" onClick={() => onEdit(meal)} title="Visa och redigera">
+        {meal.name}
+        {meal.notes && <span className="meal-notes">{meal.notes}</span>}
+      </button>
+      {meal.recipe_url && (
+        <a
+          className="meal-recipe"
+          href={meal.recipe_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Öppna recept"
+          title="Öppna recept"
+        >
+          ↗
+        </a>
+      )}
       <button className="meal-delete" aria-label="Ta bort" onClick={() => onDelete(meal.id)}>
         ×
       </button>

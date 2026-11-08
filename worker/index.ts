@@ -134,7 +134,7 @@ api.get("/calendar.ics", async (c) => {
   const end = new Date(now + FEED_WEEKS_AHEAD * 7 * day).toISOString().slice(0, 10);
   try {
     const { results } = await c.env.DB.prepare(
-      `SELECT m.id, m.date, d.name FROM meals m JOIN dishes d ON d.id = m.dish_id
+      `SELECT m.id, m.date, d.name, d.recipe_url, d.notes FROM meals m JOIN dishes d ON d.id = m.dish_id
        WHERE m.date >= ? AND m.date <= ? ORDER BY m.date, m.sort_order, m.id`,
     )
       .bind(start, end)
@@ -169,7 +169,28 @@ api.use("/*", async (c, next) => {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const MEAL_COLUMNS = "m.id, m.date, m.dish_id, d.name, m.sort_order";
+const MEAL_COLUMNS = "m.id, m.date, m.dish_id, d.name, d.recipe_url, d.notes, m.sort_order";
+const DISH_COLUMNS = "id, name, recipe_url, notes";
+const MAX_NAME = 200;
+const MAX_URL = 2000;
+const MAX_NOTES = 4000;
+
+/** Absolute http(s) URL, or undefined if the value isn't one. */
+function normalizeUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface DishRow {
+  id: string;
+  name: string;
+  recipe_url: string | null;
+  notes: string | null;
+}
 
 api.get("/meals", async (c) => {
   const start = c.req.query("start");
@@ -210,12 +231,12 @@ api.post("/meals", async (c) => {
   try {
     // Resolve the dish: by id, else by name (case-insensitive), else create it.
     let dish = dishId
-      ? await c.env.DB.prepare("SELECT id, name FROM dishes WHERE id = ?")
+      ? await c.env.DB.prepare(`SELECT ${DISH_COLUMNS} FROM dishes WHERE id = ?`)
           .bind(dishId)
-          .first<{ id: string; name: string }>()
-      : await c.env.DB.prepare("SELECT id, name FROM dishes WHERE name = ?")
+          .first<DishRow>()
+      : await c.env.DB.prepare(`SELECT ${DISH_COLUMNS} FROM dishes WHERE name = ?`)
           .bind(name)
-          .first<{ id: string; name: string }>();
+          .first<DishRow>();
     if (!dish && dishId) {
       log("meals_post_unknown_dish", { dishId });
       return c.json({ error: "Okänd maträtt" }, 404);
@@ -224,10 +245,10 @@ api.post("/meals", async (c) => {
       dish = await c.env.DB.prepare(
         `INSERT INTO dishes (id, name) VALUES (?, ?)
          ON CONFLICT (name) DO UPDATE SET name = name
-         RETURNING id, name`,
+         RETURNING ${DISH_COLUMNS}`,
       )
         .bind(crypto.randomUUID(), name)
-        .first<{ id: string; name: string }>();
+        .first<DishRow>();
       if (!dish) throw new Error("dish upsert returned no row");
     }
 
@@ -249,6 +270,8 @@ api.post("/meals", async (c) => {
       date,
       dish_id: dish.id,
       name: dish.name,
+      recipe_url: dish.recipe_url,
+      notes: dish.notes,
       sort_order: sortOrder,
     };
 
@@ -305,13 +328,69 @@ api.post("/meals/reorder", async (c) => {
 api.get("/dishes", async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
-      "SELECT id, name FROM dishes ORDER BY uses DESC, name ASC",
-    ).all<{ id: string; name: string }>();
+      `SELECT ${DISH_COLUMNS} FROM dishes ORDER BY uses DESC, name ASC`,
+    ).all<DishRow>();
     log("dishes_get_ok", { count: results.length });
     return c.json({ dishes: results });
   } catch (err) {
     logError("dishes_get_failed", err);
     return c.json({ error: "Kunde inte hämta maträtter" }, 500);
+  }
+});
+
+// Edit a dish. Fields left out are unchanged; an empty recipe_url/notes clears it.
+api.patch("/dishes/:id", async (c) => {
+  const id = c.req.param("id").toLowerCase();
+  if (!UUID_RE.test(id)) return c.json({ error: "Ogiltigt id" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    name?: unknown;
+    recipe_url?: unknown;
+    notes?: unknown;
+  };
+
+  const sets: string[] = [];
+  const values: (string | null)[] = [];
+  if (body.name !== undefined) {
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name || name.length > MAX_NAME) return c.json({ error: "Ogiltigt namn" }, 400);
+    sets.push("name = ?");
+    values.push(name);
+  }
+  if (body.recipe_url !== undefined) {
+    const raw = typeof body.recipe_url === "string" ? body.recipe_url.trim() : "";
+    let url: string | null = null;
+    if (raw) {
+      const normalized = raw.length <= MAX_URL ? normalizeUrl(raw) : undefined;
+      if (!normalized) return c.json({ error: "Länken måste börja med http:// eller https://" }, 400);
+      url = normalized;
+    }
+    sets.push("recipe_url = ?");
+    values.push(url);
+  }
+  if (body.notes !== undefined) {
+    const notes = typeof body.notes === "string" ? body.notes.trim() : "";
+    if (notes.length > MAX_NOTES) return c.json({ error: "Anteckningen är för lång" }, 400);
+    sets.push("notes = ?");
+    values.push(notes || null);
+  }
+  if (sets.length === 0) return c.json({ error: "Inget att ändra" }, 400);
+
+  try {
+    const dish = await c.env.DB.prepare(
+      `UPDATE dishes SET ${sets.join(", ")} WHERE id = ? RETURNING ${DISH_COLUMNS}`,
+    )
+      .bind(...values, id)
+      .first<DishRow>();
+    if (!dish) return c.json({ error: "Okänd maträtt" }, 404);
+    log("dish_patch_ok", { id, fields: sets.length });
+    return c.json({ dish });
+  } catch (err) {
+    if (err instanceof Error && /UNIQUE/i.test(err.message)) {
+      log("dish_patch_conflict", { id });
+      return c.json({ error: "Det finns redan en maträtt med det namnet" }, 409);
+    }
+    logError("dish_patch_failed", err, { id });
+    return c.json({ error: "Kunde inte spara maträtten" }, 500);
   }
 });
 
@@ -332,11 +411,11 @@ app.get("/widget", async (c) => {
   const days = widgetWeek(today, offset);
   try {
     const { results } = await c.env.DB.prepare(
-      `SELECT m.date, d.name FROM meals m JOIN dishes d ON d.id = m.dish_id
+      `SELECT m.date, d.name, d.recipe_url FROM meals m JOIN dishes d ON d.id = m.dish_id
        WHERE m.date >= ? AND m.date <= ? ORDER BY m.date, m.sort_order, m.id`,
     )
       .bind(days[0], days[6])
-      .all<{ date: string; name: string }>();
+      .all<{ date: string; name: string; recipe_url: string | null }>();
     log("widget_ok", { start: days[0], count: results.length });
     return c.html(renderWidget({
         days,
