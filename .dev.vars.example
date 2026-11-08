@@ -3,6 +3,3 @@
 APP_PASSWORD="changeme"
 # A long random string used to sign session cookies.
 SESSION_SECRET="please-change-me-to-a-long-random-string"
-# Optional: enables the read-only calendar feed at /api/calendar.ics?token=...
-# (used by Home Assistant's Remote Calendar integration). Use a long random string.
-CALENDAR_TOKEN="please-change-me-too"

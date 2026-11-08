@@ -77,34 +77,26 @@ Then open the printed local URL and log in with the `APP_PASSWORD` from `.dev.va
 The Worker exposes the planned dinners as an iCalendar feed. Each dinner is an
 all-day event; the feed covers 8 weeks back and 26 weeks ahead.
 
-1. Set a token (a long random string) and deploy:
-
-   ```bash
-   npx wrangler secret put CALENDAR_TOKEN
-   ```
-
-   The feed returns 404 until this secret is set.
-
-2. In Home Assistant: **Settings → Devices & services → Add integration →
+1. In Home Assistant: **Settings → Devices & services → Add integration →
    Remote Calendar**. Give it a name like `Middagar` and the URL:
 
    ```
-   https://<your-worker-domain>/api/calendar.ics?token=<CALENDAR_TOKEN>
+   https://<your-worker-domain>/api/calendar.ics
    ```
 
    This creates an entity such as `calendar.middagar`.
 
-3. Put it on a dashboard with a **Calendar** card (week or list view). The
+2. Put it on a dashboard with a **Calendar** card (week or list view). The
    entity's `message` attribute is today's dinner, which you can show in a
    Tile or Entity card.
 
-4. Remote Calendar only re-downloads the feed about once a day. To see changes
+3. Remote Calendar only re-downloads the feed about once a day. To see changes
    sooner, add an automation that calls `homeassistant.update_entity` on
    `calendar.middagar` every 15 minutes (a time-pattern trigger).
 
 The same URL works as a calendar subscription on a phone or in Google
-Calendar. Anyone with the URL can read the dinner list, so treat the token like
-a password. To revoke access, set a new `CALENDAR_TOKEN`.
+Calendar. The feed is public and read-only: anyone with the URL can see the
+dinner list, but changing anything still requires logging in.
 
 ## Project layout
 
