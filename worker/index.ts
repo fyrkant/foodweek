@@ -134,7 +134,8 @@ api.get("/calendar.ics", async (c) => {
   const end = new Date(now + FEED_WEEKS_AHEAD * 7 * day).toISOString().slice(0, 10);
   try {
     const { results } = await c.env.DB.prepare(
-      "SELECT id, date, name FROM meals WHERE date >= ? AND date <= ? ORDER BY date, sort_order, id",
+      `SELECT m.id, m.date, d.name FROM meals m JOIN dishes d ON d.id = m.dish_id
+       WHERE m.date >= ? AND m.date <= ? ORDER BY m.date, m.sort_order, m.id`,
     )
       .bind(start, end)
       .all<FeedMeal>();
@@ -167,6 +168,8 @@ api.use("/*", async (c, next) => {
 // --- Meals --------------------------------------------------------------
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const MEAL_COLUMNS = "m.id, m.date, m.dish_id, d.name, m.sort_order";
 
 api.get("/meals", async (c) => {
   const start = c.req.query("start");
@@ -177,7 +180,8 @@ api.get("/meals", async (c) => {
   }
   try {
     const { results } = await c.env.DB.prepare(
-      "SELECT id, date, name, sort_order FROM meals WHERE date >= ? AND date <= ? ORDER BY date, sort_order, id",
+      `SELECT ${MEAL_COLUMNS} FROM meals m JOIN dishes d ON d.id = m.dish_id
+       WHERE m.date >= ? AND m.date <= ? ORDER BY m.date, m.sort_order, m.id`,
     )
       .bind(start, end)
       .all();
@@ -190,15 +194,43 @@ api.get("/meals", async (c) => {
 });
 
 api.post("/meals", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { date?: string; name?: string };
+  const body = (await c.req.json().catch(() => ({}))) as {
+    date?: string;
+    dishId?: string;
+    name?: string;
+  };
   const date = body.date?.trim();
+  const dishId = body.dishId?.trim().toLowerCase();
   const name = body.name?.trim();
-  if (!date || !DATE_RE.test(date) || !name) {
-    log("meals_post_bad_request", { date, hasName: Boolean(name) });
-    return c.json({ error: "Datum och namn krävs" }, 400);
+  if (!date || !DATE_RE.test(date) || !(dishId ? UUID_RE.test(dishId) : name)) {
+    log("meals_post_bad_request", { date, dishId, hasName: Boolean(name) });
+    return c.json({ error: "Datum och maträtt krävs" }, 400);
   }
 
   try {
+    // Resolve the dish: by id, else by name (case-insensitive), else create it.
+    let dish = dishId
+      ? await c.env.DB.prepare("SELECT id, name FROM dishes WHERE id = ?")
+          .bind(dishId)
+          .first<{ id: string; name: string }>()
+      : await c.env.DB.prepare("SELECT id, name FROM dishes WHERE name = ?")
+          .bind(name)
+          .first<{ id: string; name: string }>();
+    if (!dish && dishId) {
+      log("meals_post_unknown_dish", { dishId });
+      return c.json({ error: "Okänd maträtt" }, 404);
+    }
+    if (!dish) {
+      dish = await c.env.DB.prepare(
+        `INSERT INTO dishes (id, name) VALUES (?, ?)
+         ON CONFLICT (name) DO UPDATE SET name = name
+         RETURNING id, name`,
+      )
+        .bind(crypto.randomUUID(), name)
+        .first<{ id: string; name: string }>();
+      if (!dish) throw new Error("dish upsert returned no row");
+    }
+
     const row = await c.env.DB.prepare(
       "SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM meals WHERE date = ?",
     )
@@ -206,23 +238,24 @@ api.post("/meals", async (c) => {
       .first<{ next: number }>();
     const sortOrder = row?.next ?? 0;
 
-    const inserted = await c.env.DB.prepare(
-      "INSERT INTO meals (date, name, sort_order) VALUES (?, ?, ?) RETURNING id, date, name, sort_order",
-    )
-      .bind(date, name, sortOrder)
-      .first();
+    const [inserted] = await c.env.DB.batch<{ id: number }>([
+      c.env.DB.prepare(
+        "INSERT INTO meals (date, dish_id, sort_order) VALUES (?, ?, ?) RETURNING id",
+      ).bind(date, dish.id, sortOrder),
+      c.env.DB.prepare("UPDATE dishes SET uses = uses + 1 WHERE id = ?").bind(dish.id),
+    ]);
+    const meal = {
+      id: inserted.results[0].id,
+      date,
+      dish_id: dish.id,
+      name: dish.name,
+      sort_order: sortOrder,
+    };
 
-    // Remember the dinner for autocomplete.
-    await c.env.DB.prepare(
-      "INSERT INTO dinners (name, uses) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET uses = uses + 1",
-    )
-      .bind(name)
-      .run();
-
-    log("meals_post_ok", { date, name });
-    return c.json({ meal: inserted }, 201);
+    log("meals_post_ok", { date, dishId: dish.id });
+    return c.json({ meal }, 201);
   } catch (err) {
-    logError("meals_post_failed", err, { date, name });
+    logError("meals_post_failed", err, { date, dishId, name });
     return c.json({ error: "Kunde inte spara middagen" }, 500);
   }
 });
@@ -267,18 +300,18 @@ api.post("/meals/reorder", async (c) => {
   }
 });
 
-// --- Dinner catalog (autocomplete) -------------------------------------
+// --- Dish catalog (autocomplete) ----------------------------------------
 
-api.get("/dinners", async (c) => {
+api.get("/dishes", async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
-      "SELECT name FROM dinners ORDER BY uses DESC, name COLLATE NOCASE ASC",
-    ).all<{ name: string }>();
-    log("dinners_get_ok", { count: results.length });
-    return c.json({ dinners: results.map((r) => r.name) });
+      "SELECT id, name FROM dishes ORDER BY uses DESC, name ASC",
+    ).all<{ id: string; name: string }>();
+    log("dishes_get_ok", { count: results.length });
+    return c.json({ dishes: results });
   } catch (err) {
-    logError("dinners_get_failed", err);
-    return c.json({ error: "Kunde inte hämta middagar" }, 500);
+    logError("dishes_get_failed", err);
+    return c.json({ error: "Kunde inte hämta maträtter" }, 500);
   }
 });
 
@@ -299,7 +332,8 @@ app.get("/widget", async (c) => {
   const days = widgetWeek(today, offset);
   try {
     const { results } = await c.env.DB.prepare(
-      "SELECT date, name FROM meals WHERE date >= ? AND date <= ? ORDER BY date, sort_order, id",
+      `SELECT m.date, d.name FROM meals m JOIN dishes d ON d.id = m.dish_id
+       WHERE m.date >= ? AND m.date <= ? ORDER BY m.date, m.sort_order, m.id`,
     )
       .bind(days[0], days[6])
       .all<{ date: string; name: string }>();

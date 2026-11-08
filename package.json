@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "npm run build && wrangler d1 migrations apply foodweek --remote && wrangler deploy",
     "typecheck": "tsc -b",
     "cf-typegen": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply foodweek --local",

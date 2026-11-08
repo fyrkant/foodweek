@@ -1,6 +1,6 @@
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import type { Meal } from "../api";
+import type { Dish, DishChoice, Meal } from "../api";
 import { WEEKDAYS_SV, parseDate, isToday, type DateStr } from "../dates";
 import { holidayFor } from "../holidays";
 import AddMeal from "./AddMeal";
@@ -17,8 +17,8 @@ export default function DayColumn({
   date: DateStr;
   meals: Meal[];
   today: DateStr;
-  suggestions: string[];
-  onAdd: (date: DateStr, name: string) => void;
+  suggestions: Dish[];
+  onAdd: (date: DateStr, dish: DishChoice) => void;
   onDelete: (id: number) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: date });
@@ -55,7 +55,7 @@ export default function DayColumn({
         </div>
       </SortableContext>
 
-      <AddMeal suggestions={suggestions} onAdd={(name) => onAdd(date, name)} />
+      <AddMeal suggestions={suggestions} onAdd={(dish) => onAdd(date, dish)} />
     </section>
   );
 }

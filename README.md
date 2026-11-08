@@ -74,6 +74,11 @@ Then open the printed local URL and log in with the `APP_PASSWORD` from `.dev.va
    npm run deploy
    ```
 
+   `npm run deploy` applies any pending D1 migrations before deploying the
+   Worker. If you deploy some other way (for example Cloudflare's Git
+   integration), run `npm run db:migrate` first, because the new code
+   expects the new schema.
+
 ## Home Assistant
 
 There are two public, read-only ways to show the plan. Changing anything still
@@ -133,7 +138,7 @@ dinner list, but changing anything still requires logging in.
 
 ```
 worker/            Cloudflare Worker (Hono API + static asset serving)
-  index.ts         Routes: /api/login, /api/meals, /api/dinners, ...
+  index.ts         Routes: /api/login, /api/meals, /api/dishes, ...
   auth.ts          Signed-cookie session helpers (Web Crypto HMAC)
   ical.ts          iCalendar writer for the calendar feed
   widget.ts        Server-rendered week widget for dashboards
@@ -147,5 +152,7 @@ src/               React app
 
 ## Data model
 
-- `dinners(name, uses, created_at)` — catalog of entered dinners, powers autocomplete.
-- `meals(id, date, name, sort_order, created_at)` — a dinner planned for a day.
+- `dishes(id, name, uses, created_at)`: every dish that has been entered, with
+  a UUID `id`. Names are unique, ignoring case. This powers autocomplete.
+- `meals(id, date, dish_id, sort_order, created_at)`: a dish planned for a day.
+  It references `dishes.id`, so renaming a dish updates every day it's planned.

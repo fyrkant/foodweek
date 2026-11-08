@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { Dish, DishChoice } from "../api";
 
 /**
  * Full-width "+" button that expands into an autocomplete input.
@@ -9,8 +10,8 @@ export default function AddMeal({
   suggestions,
   onAdd,
 }: {
-  suggestions: string[];
-  onAdd: (name: string) => void;
+  suggestions: Dish[];
+  onAdd: (dish: DishChoice) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
@@ -20,7 +21,7 @@ export default function AddMeal({
 
   const query = value.trim().toLowerCase();
   const matches = query
-    ? suggestions.filter((s) => s.toLowerCase().includes(query)).slice(0, 8)
+    ? suggestions.filter((s) => s.name.toLowerCase().includes(query)).slice(0, 8)
     : suggestions.slice(0, 8);
 
   useEffect(() => {
@@ -42,10 +43,17 @@ export default function AddMeal({
     setHighlight(0);
   }
 
-  function commit(name: string) {
-    const trimmed = name.trim();
+  function pick(dish: Dish) {
+    onAdd({ dishId: dish.id });
+    close();
+  }
+
+  /** Typed text: reuse the dish with that exact name (any case), else create it. */
+  function commitText(text: string) {
+    const trimmed = text.trim();
     if (!trimmed) return;
-    onAdd(trimmed);
+    const existing = suggestions.find((s) => s.name.toLowerCase() === trimmed.toLowerCase());
+    onAdd(existing ? { dishId: existing.id } : { name: trimmed });
     close();
   }
 
@@ -58,10 +66,12 @@ export default function AddMeal({
       setHighlight((h) => Math.max(h - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const pick = matches[highlight];
-      // If the highlighted suggestion matches exactly, use it; otherwise
-      // create whatever was typed.
-      commit(pick && value.trim() === "" ? pick : value || pick || "");
+      const highlighted = matches[highlight];
+      // With nothing typed, Enter picks the highlighted suggestion; otherwise
+      // it uses what was typed.
+      if (highlighted && value.trim() === "") pick(highlighted);
+      else if (value.trim()) commitText(value);
+      else if (highlighted) pick(highlighted);
     } else if (e.key === "Escape") {
       e.preventDefault();
       close();
@@ -92,24 +102,24 @@ export default function AddMeal({
         <ul className="combo-list">
           {matches.map((s, i) => (
             <li
-              key={s}
+              key={s.id}
               className={i === highlight ? "active" : ""}
               onMouseEnter={() => setHighlight(i)}
               onMouseDown={(e) => {
                 e.preventDefault();
-                commit(s);
+                pick(s);
               }}
             >
-              {s}
+              {s.name}
             </li>
           ))}
         </ul>
       )}
       {value.trim() &&
-        !matches.some((m) => m.toLowerCase() === value.trim().toLowerCase()) && (
+        !matches.some((m) => m.name.toLowerCase() === value.trim().toLowerCase()) && (
           <button className="combo-create" onMouseDown={(e) => {
             e.preventDefault();
-            commit(value);
+            commitText(value);
           }}>
             + Skapa “{value.trim()}”
           </button>
