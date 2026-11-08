@@ -8,12 +8,14 @@ import {
   sessionCookie,
   verifySessionToken,
 } from "./auth";
+import { buildCalendar, type FeedMeal } from "./ical";
 
 interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   APP_PASSWORD: string;
   SESSION_SECRET: string;
+  CALENDAR_TOKEN?: string;
 }
 
 type Variables = Record<string, never>;
@@ -116,6 +118,46 @@ api.get("/session", async (c) => {
   } catch (err) {
     logError("session_check_failed", err);
     return c.json({ authenticated: false });
+  }
+});
+
+// --- Calendar feed (Home Assistant, phone calendars) -------------------
+// Read-only ICS feed guarded by its own token, since calendar clients can't
+// log in. Disabled unless the CALENDAR_TOKEN secret is set.
+
+const FEED_WEEKS_BACK = 8;
+const FEED_WEEKS_AHEAD = 26;
+
+api.get("/calendar.ics", async (c) => {
+  const expected = c.env.CALENDAR_TOKEN;
+  if (!expected) {
+    log("calendar_disabled");
+    return c.text("Not found", 404);
+  }
+  const token = c.req.query("token") ?? "";
+  if (!safeEqual(token, expected)) {
+    log("calendar_rejected");
+    return c.text("Unauthorized", 401);
+  }
+
+  const now = Date.now();
+  const day = 24 * 3600 * 1000;
+  const start = new Date(now - FEED_WEEKS_BACK * 7 * day).toISOString().slice(0, 10);
+  const end = new Date(now + FEED_WEEKS_AHEAD * 7 * day).toISOString().slice(0, 10);
+  try {
+    const { results } = await c.env.DB.prepare(
+      "SELECT id, date, name FROM meals WHERE date >= ? AND date <= ? ORDER BY date, sort_order, id",
+    )
+      .bind(start, end)
+      .all<FeedMeal>();
+    log("calendar_ok", { count: results.length });
+    return c.body(buildCalendar(results, new URL(c.req.url).hostname), 200, {
+      "Content-Type": "text/calendar; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+  } catch (err) {
+    logError("calendar_failed", err);
+    return c.text("Server error", 500);
   }
 });
 

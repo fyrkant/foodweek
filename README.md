@@ -24,6 +24,8 @@ are highlighted on each day.
 - Drag a meal by its handle to reorder within a day or move it to another day.
 - Swedish red days and notable eves (julafton, midsommarafton, …) are labelled
   and styled.
+- Read-only **calendar feed** (ICS) so the plan shows up in Home Assistant or a
+  phone calendar.
 
 ## Local development
 
@@ -70,12 +72,47 @@ Then open the printed local URL and log in with the `APP_PASSWORD` from `.dev.va
    npm run deploy
    ```
 
+## Home Assistant
+
+The Worker exposes the planned dinners as an iCalendar feed. Each dinner is an
+all-day event; the feed covers 8 weeks back and 26 weeks ahead.
+
+1. Set a token (a long random string) and deploy:
+
+   ```bash
+   npx wrangler secret put CALENDAR_TOKEN
+   ```
+
+   The feed returns 404 until this secret is set.
+
+2. In Home Assistant: **Settings → Devices & services → Add integration →
+   Remote Calendar**. Give it a name like `Middagar` and the URL:
+
+   ```
+   https://<your-worker-domain>/api/calendar.ics?token=<CALENDAR_TOKEN>
+   ```
+
+   This creates an entity such as `calendar.middagar`.
+
+3. Put it on a dashboard with a **Calendar** card (week or list view). The
+   entity's `message` attribute is today's dinner, which you can show in a
+   Tile or Entity card.
+
+4. Remote Calendar only re-downloads the feed about once a day. To see changes
+   sooner, add an automation that calls `homeassistant.update_entity` on
+   `calendar.middagar` every 15 minutes (a time-pattern trigger).
+
+The same URL works as a calendar subscription on a phone or in Google
+Calendar. Anyone with the URL can read the dinner list, so treat the token like
+a password. To revoke access, set a new `CALENDAR_TOKEN`.
+
 ## Project layout
 
 ```
 worker/            Cloudflare Worker (Hono API + static asset serving)
   index.ts         Routes: /api/login, /api/meals, /api/dinners, ...
   auth.ts          Signed-cookie session helpers (Web Crypto HMAC)
+  ical.ts          iCalendar writer for the calendar feed
 migrations/        D1 SQL migrations
 src/               React app
   components/       WeekView, DayColumn, MealCard, AddMeal, Login
