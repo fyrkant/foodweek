@@ -24,6 +24,10 @@ are highlighted on each day.
 - Drag a meal by its handle to reorder within a day or move it to another day.
 - Swedish red days and notable eves (julafton, midsommarafton, …) are labelled
   and styled.
+- Read-only **calendar feed** (ICS) so the plan shows up in Home Assistant or a
+  phone calendar.
+- Read-only **widget page** (`/widget`) with this week's dinners, made for
+  embedding in a Home Assistant dashboard.
 
 ## Local development
 
@@ -70,12 +74,65 @@ Then open the printed local URL and log in with the `APP_PASSWORD` from `.dev.va
    npm run deploy
    ```
 
+## Home Assistant
+
+There are two public, read-only ways to show the plan. Changing anything still
+requires logging in.
+
+### Widget (Webpage card)
+
+`/widget` renders this week's dinners as a small styled page with a transparent
+background, so it blends into a dashboard card. It highlights today, dims past
+days, shows Swedish holidays, and reloads itself every 10 minutes.
+
+Add a **Webpage** card to the dashboard with the URL
+`https://<your-worker-domain>/widget`. A 7-day week needs roughly 340 px of
+height, so set the card's aspect ratio to about `90%`.
+
+Options (query parameters):
+
+- `theme=light` or `theme=dark` to force a colour scheme. By default it follows
+  the device's setting.
+- `week=1` shows next week (`week=-1` shows last week).
+
+`/widget` is listed in `assets.run_worker_first` in `wrangler.jsonc`. Without
+that, Cloudflare answers browser page loads with the app's `index.html`
+before the Worker runs.
+
+### Calendar feed
+
+The Worker exposes the planned dinners as an iCalendar feed. Each dinner is an
+all-day event; the feed covers 8 weeks back and 26 weeks ahead.
+
+1. In Home Assistant: **Settings → Devices & services → Add integration →
+   Remote Calendar**. Give it a name like `Middagar` and the URL:
+
+   ```
+   https://<your-worker-domain>/api/calendar.ics
+   ```
+
+   This creates an entity such as `calendar.middagar`.
+
+2. Put it on a dashboard with a **Calendar** card (week or list view). The
+   entity's `message` attribute is today's dinner, which you can show in a
+   Tile or Entity card.
+
+3. Remote Calendar only re-downloads the feed about once a day. To see changes
+   sooner, add an automation that calls `homeassistant.update_entity` on
+   `calendar.middagar` every 15 minutes (a time-pattern trigger).
+
+The same URL works as a calendar subscription on a phone or in Google
+Calendar. The feed is public and read-only: anyone with the URL can see the
+dinner list, but changing anything still requires logging in.
+
 ## Project layout
 
 ```
 worker/            Cloudflare Worker (Hono API + static asset serving)
   index.ts         Routes: /api/login, /api/meals, /api/dinners, ...
   auth.ts          Signed-cookie session helpers (Web Crypto HMAC)
+  ical.ts          iCalendar writer for the calendar feed
+  widget.ts        Server-rendered week widget for dashboards
 migrations/        D1 SQL migrations
 src/               React app
   components/       WeekView, DayColumn, MealCard, AddMeal, Login

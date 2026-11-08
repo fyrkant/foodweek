@@ -8,6 +8,8 @@ import {
   sessionCookie,
   verifySessionToken,
 } from "./auth";
+import { buildCalendar, type FeedMeal } from "./ical";
+import { renderWidget, stockholmToday, widgetWeek, type WidgetTheme } from "./widget";
 
 interface Env {
   DB: D1Database;
@@ -116,6 +118,34 @@ api.get("/session", async (c) => {
   } catch (err) {
     logError("session_check_failed", err);
     return c.json({ authenticated: false });
+  }
+});
+
+// --- Calendar feed (Home Assistant, phone calendars) -------------------
+// Public, read-only ICS feed: calendar clients can't log in.
+
+const FEED_WEEKS_BACK = 8;
+const FEED_WEEKS_AHEAD = 26;
+
+api.get("/calendar.ics", async (c) => {
+  const now = Date.now();
+  const day = 24 * 3600 * 1000;
+  const start = new Date(now - FEED_WEEKS_BACK * 7 * day).toISOString().slice(0, 10);
+  const end = new Date(now + FEED_WEEKS_AHEAD * 7 * day).toISOString().slice(0, 10);
+  try {
+    const { results } = await c.env.DB.prepare(
+      "SELECT id, date, name FROM meals WHERE date >= ? AND date <= ? ORDER BY date, sort_order, id",
+    )
+      .bind(start, end)
+      .all<FeedMeal>();
+    log("calendar_ok", { count: results.length });
+    return c.body(buildCalendar(results, new URL(c.req.url).hostname), 200, {
+      "Content-Type": "text/calendar; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+  } catch (err) {
+    logError("calendar_failed", err);
+    return c.text("Server error", 500);
   }
 });
 
@@ -253,6 +283,33 @@ api.get("/dinners", async (c) => {
 });
 
 app.route("/api", api);
+
+// Public, read-only week view for embedding (Home Assistant Webpage card).
+// Must be listed in assets.run_worker_first in wrangler.jsonc, otherwise
+// browser navigations get the SPA's index.html instead.
+// ?theme=light|dark (default: follows the system), ?week=1 for next week.
+app.get("/widget", async (c) => {
+  const themeParam = c.req.query("theme");
+  const theme: WidgetTheme = themeParam === "light" || themeParam === "dark" ? themeParam : "auto";
+  const offset = Math.max(-52, Math.min(52, Math.trunc(Number(c.req.query("week") ?? 0)) || 0));
+
+  const today = stockholmToday();
+  const days = widgetWeek(today, offset);
+  try {
+    const { results } = await c.env.DB.prepare(
+      "SELECT date, name FROM meals WHERE date >= ? AND date <= ? ORDER BY date, sort_order, id",
+    )
+      .bind(days[0], days[6])
+      .all<{ date: string; name: string }>();
+    log("widget_ok", { start: days[0], count: results.length });
+    return c.html(renderWidget({ days, meals: results, today, theme, refreshSeconds: 600 }), 200, {
+      "Cache-Control": "no-store",
+    });
+  } catch (err) {
+    logError("widget_failed", err);
+    return c.text("Kunde inte hämta middagar", 500);
+  }
+});
 
 // Everything else: serve the static SPA assets.
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
