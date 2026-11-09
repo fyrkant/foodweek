@@ -10,6 +10,14 @@ import {
   type OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
 import { safeEqual } from "./auth";
+import type { LimitStatus } from "./durable";
+import { clientIp } from "./effects";
+
+interface PasswordLimiter {
+  check(ip: string): Promise<LimitStatus>;
+  recordFailure(ip: string): Promise<void>;
+  recordSuccess(ip: string): Promise<void>;
+}
 
 /** The whole household shares one account. */
 export const OWNER_ID = "household";
@@ -90,6 +98,7 @@ export async function handleAuthorize(
   request: Request,
   oauth: OAuthHelpers,
   appPassword: string,
+  limiter: PasswordLimiter,
 ): Promise<Response> {
   try {
     if (request.method === "GET") return await renderConsent(oauth, request);
@@ -103,13 +112,24 @@ export async function handleAuthorize(
       return new Response(null, { status: 302, headers: denied.headers });
     }
 
+    const ip = clientIp(request);
+    const original = new URL(request.url);
+    original.search = String(form.get("query") ?? "");
+    const retry = (message: string) =>
+      renderConsent(oauth, new Request(original, { headers: request.headers }), message);
+
+    const status = await limiter.check(ip);
+    if (!status.allowed) {
+      const minutes = Math.max(1, Math.ceil(status.retryAfter / 60));
+      return await retry(`För många felaktiga försök. Försök igen om ${minutes} min.`);
+    }
     if (!appPassword || !safeEqual(String(form.get("password") ?? ""), appPassword)) {
+      await limiter.recordFailure(ip);
       // Slow down guessing, then show a fresh form for the same request.
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      const original = new URL(request.url);
-      original.search = String(form.get("query") ?? "");
-      return await renderConsent(oauth, new Request(original, { headers: request.headers }), "Fel lösenord");
+      return await retry("Fel lösenord");
     }
+    await limiter.recordSuccess(ip);
 
     const approved = await oauth.approveConsent(request, handle);
     const { redirectTo } = await oauth.completeAuthorization({

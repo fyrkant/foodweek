@@ -28,6 +28,7 @@ import {
   updateDish,
   type MealRow,
 } from "./db";
+import type { Effects } from "./effects";
 import { stockholmToday } from "./widget";
 
 const INSTRUCTIONS = `foodweek is a household's weekly dinner planner (Swedish; weeks run Monday to Sunday, ISO week numbers, dates are YYYY-MM-DD in Europe/Stockholm).
@@ -48,6 +49,7 @@ function dinner(m: MealRow) {
     dish_id: m.dish_id,
     name: m.name,
     ...(m.recipe_url ? { recipe_url: m.recipe_url } : {}),
+    ...(m.recipe_title ? { recipe_title: m.recipe_title } : {}),
     ...(m.notes ? { notes: m.notes } : {}),
   };
 }
@@ -68,7 +70,7 @@ async function run(fn: () => Promise<unknown>) {
   }
 }
 
-function buildServer(db: D1Database): McpServer {
+function buildServer(db: D1Database, fx: Effects): McpServer {
   const server = new McpServer(
     { name: "foodweek", version: "1.0.0" },
     { instructions: INSTRUCTIONS },
@@ -173,6 +175,7 @@ function buildServer(db: D1Database): McpServer {
       run(async () => {
         if (!dish_id === !dish_name) throw new InputError("Pass exactly one of dish_id or dish_name");
         const meal = await addMeal(db, date, dish_id ? { dishId: dish_id } : { name: dish_name! });
+        fx.changed();
         return { planned: { date: meal.date, weekday: weekday(meal.date), ...dinner(meal) } };
       }),
   );
@@ -192,6 +195,7 @@ function buildServer(db: D1Database): McpServer {
     ({ meal_id, date, position }) =>
       run(async () => {
         const meal = await moveMeal(db, meal_id, date, position);
+        fx.changed();
         return { moved: { date: meal.date, weekday: weekday(meal.date), position: meal.sort_order, ...dinner(meal) } };
       }),
   );
@@ -207,6 +211,7 @@ function buildServer(db: D1Database): McpServer {
     ({ meal_id }) =>
       run(async () => {
         if (!(await deleteMeal(db, meal_id))) throw new InputError("No dinner with that meal_id", 404);
+        fx.changed();
         return { removed: meal_id };
       }),
   );
@@ -226,14 +231,19 @@ function buildServer(db: D1Database): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     },
     ({ dish_id, name, recipe_url, notes }) =>
-      run(async () => ({ dish: await updateDish(db, dish_id, { name, recipe_url, notes }) })),
+      run(async () => {
+        const dish = await updateDish(db, dish_id, { name, recipe_url, notes });
+        fx.changed();
+        if (recipe_url !== undefined && dish.recipe_url) fx.refreshPreview(dish.id);
+        return { dish };
+      }),
   );
 
   return server;
 }
 
-export async function handleMcp(request: Request, db: D1Database): Promise<Response> {
-  const server = buildServer(db);
+export async function handleMcp(request: Request, db: D1Database, fx: Effects): Promise<Response> {
+  const server = buildServer(db, fx);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

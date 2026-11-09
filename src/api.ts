@@ -5,6 +5,8 @@ export interface Meal {
   name: string;
   recipe_url: string | null;
   notes: string | null;
+  recipe_title: string | null;
+  recipe_image: string | null;
   sort_order: number;
 }
 
@@ -13,6 +15,9 @@ export interface Dish {
   name: string;
   recipe_url: string | null;
   notes: string | null;
+  /** Preview of the recipe page, filled in by the server shortly after the link is saved. */
+  recipe_title: string | null;
+  recipe_image: string | null;
 }
 
 /** Fields to change on a dish; an empty string clears recipe_url/notes. */

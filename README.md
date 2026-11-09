@@ -24,6 +24,10 @@ are highlighted on each day.
 - Drag a meal by its handle to reorder within a day or move it to another day.
 - Tap a dinner to edit its name, recipe link and notes. Details belong to the
   dish, so they show up on every day it's planned. A ↗ icon opens the recipe.
+- Recipe links get a preview (title and image) fetched from the recipe page.
+- **Live updates:** the app and the widget refresh as soon as anything changes,
+  from another device, the widget's data or Claude.
+- Wrong passwords are rate limited (app login and the Claude approval page).
 - Swedish red days and notable eves (julafton, midsommarafton, …) are labelled
   and styled.
 - Read-only **calendar feed** (ICS) so the plan shows up in Home Assistant or a
@@ -178,6 +182,33 @@ echo 'PUBLIC_URL="https://localhost:5443"' >> dist/foodweek/.dev.vars   # plus A
 npx wrangler dev -c dist/foodweek/wrangler.json --local-protocol https --upstream-protocol https --port 5443
 ```
 
+## Live updates
+
+A Durable Object (`LiveUpdates`) holds a WebSocket per open app or widget at
+`/live`. Every write (HTTP API or MCP) calls its `broadcast()`, which sends
+`{"type":"changed"}`; clients then refetch. Messages carry no data, so the
+socket needs no login, like the widget. Sockets use the hibernation API, so
+idle connections don't keep the object running, and keepalive pings are
+answered without waking it. The widget still reloads every 10 minutes as a
+fallback.
+
+## Password rate limiting
+
+A second Durable Object (`LoginLimiter`) counts failed passwords in its SQLite
+storage, shared by the app login and the Claude approval page: an IP is blocked
+for 15 minutes after 5 failures, and everyone is blocked after 20 failures in
+an hour. A correct password clears that IP's failures. App sessions last 30
+days, so a lockout rarely affects someone already logged in.
+
+## Recipe previews
+
+When a recipe link is saved, the Worker fetches the page in the background
+(8 s timeout, 1.5 MB cap, public addresses only via the
+`global_fetch_strictly_public` flag) and stores a title and image. It prefers
+schema.org `Recipe` JSON-LD, then Open Graph/Twitter tags, then `<title>`.
+Links saved earlier are filled in a few at a time when the app loads; failed
+fetches are retried after a week.
+
 ## Project layout
 
 ```
@@ -186,6 +217,9 @@ worker/            Cloudflare Worker (Hono API + static asset serving)
   db.ts            Meal and dish operations shared by the API and MCP
   mcp.ts           MCP server and tools
   oauth.ts         OAuth consent page (approve with the app password)
+  durable.ts       Durable Objects: LiveUpdates (WebSockets), LoginLimiter
+  effects.ts       Broadcasting changes and refreshing previews after writes
+  preview.ts       Recipe page title/image extraction
   auth.ts          Signed-cookie session helpers (Web Crypto HMAC)
   ical.ts          iCalendar writer for the calendar feed
   widget.ts        Server-rendered week widget for dashboards
@@ -199,8 +233,8 @@ src/               React app
 
 ## Data model
 
-- `dishes(id, name, uses, recipe_url, notes, created_at)`: every dish that has
-  been entered, with a UUID `id`. Names are unique, ignoring case. This powers
-  autocomplete.
+- `dishes(id, name, uses, recipe_url, notes, recipe_title, recipe_image,
+  recipe_checked_at, created_at)`: every dish that has been entered, with a
+  UUID `id`. Names are unique, ignoring case. This powers autocomplete.
 - `meals(id, date, dish_id, sort_order, created_at)`: a dish planned for a day.
   It references `dishes.id`, so renaming a dish updates every day it's planned.

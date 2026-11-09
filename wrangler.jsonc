@@ -12,6 +12,7 @@
       "/mcp",
       "/mcp/*",
       "/authorize",
+      "/live",
       "/token",
       "/register",
       "/.well-known/*"
@@ -28,6 +29,15 @@
       "database_id": "a288bc1b-e64b-4f20-8aa7-73fda961c70b",
       "migrations_dir": "migrations"
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "LIVE", "class_name": "LiveUpdates" },
+      { "name": "LOGIN_LIMITER", "class_name": "LoginLimiter" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["LiveUpdates", "LoginLimiter"] }
   ],
   "kv_namespaces": [
     {

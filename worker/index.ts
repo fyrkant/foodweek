@@ -13,6 +13,7 @@ import {
   InputError,
   addMeal,
   deleteMeal,
+  dishesNeedingPreview,
   getMeals,
   isValidDate,
   listDishes,
@@ -20,6 +21,8 @@ import {
   updateDish,
   type DishPatch,
 } from "./db";
+import type { LiveUpdates, LoginLimiter } from "./durable";
+import { clientIp, effects, liveStub, loginLimiter } from "./effects";
 import { buildCalendar } from "./ical";
 import { handleMcp } from "./mcp";
 import { handleAuthorize } from "./oauth";
@@ -35,6 +38,8 @@ interface Env {
   SESSION_SECRET: string;
   /** Canonical origin, e.g. https://foodweek.example.workers.dev; the MCP resource is PUBLIC_URL/mcp. */
   PUBLIC_URL: string;
+  LIVE: DurableObjectNamespace<LiveUpdates>;
+  LOGIN_LIMITER: DurableObjectNamespace<LoginLimiter>;
 }
 
 type Variables = Record<string, never>;
@@ -84,6 +89,11 @@ const api = new Hono<{ Bindings: Env }>();
 
 // --- Auth ---------------------------------------------------------------
 
+function tooManyAttempts(retryAfter: number): string {
+  const minutes = Math.max(1, Math.ceil(retryAfter / 60));
+  return `För många felaktiga försök. Försök igen om ${minutes} min.`;
+}
+
 api.post("/login", async (c) => {
   try {
     // Surface misconfiguration clearly instead of throwing a bare 500.
@@ -98,16 +108,23 @@ api.post("/login", async (c) => {
       );
     }
 
+    const ip = clientIp(c.req.raw);
+    const limiter = loginLimiter(c.env);
+    const status = await limiter.check(ip);
+    if (!status.allowed) {
+      log("login_rejected", { reason: "rate_limited", retryAfter: status.retryAfter });
+      c.header("Retry-After", String(status.retryAfter));
+      return c.json({ error: tooManyAttempts(status.retryAfter) }, 429);
+    }
+
     const body = (await c.req.json().catch(() => ({}))) as { password?: string };
     const password = body.password;
-    if (!password) {
-      log("login_rejected", { reason: "no_password" });
+    if (!password || !safeEqual(password, c.env.APP_PASSWORD)) {
+      await limiter.recordFailure(ip);
+      log("login_rejected", { reason: password ? "wrong_password" : "no_password" });
       return c.json({ error: "Fel lösenord" }, 401);
     }
-    if (!safeEqual(password, c.env.APP_PASSWORD)) {
-      log("login_rejected", { reason: "wrong_password" });
-      return c.json({ error: "Fel lösenord" }, 401);
-    }
+    await limiter.recordSuccess(ip);
 
     const token = await createSessionToken(c.env.SESSION_SECRET);
     c.header("Set-Cookie", sessionCookie(token));
@@ -225,6 +242,7 @@ api.post("/meals", async (c) => {
   }
   try {
     const meal = await addMeal(c.env.DB, date, choice);
+    effects(c.env, c.executionCtx).changed();
     log("meals_post_ok", { date, dishId: meal.dish_id });
     return c.json({ meal }, 201);
   } catch (err) {
@@ -239,7 +257,7 @@ api.delete("/meals/:id", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "Ogiltigt id" }, 400);
   try {
-    await deleteMeal(c.env.DB, id);
+    if (await deleteMeal(c.env.DB, id)) effects(c.env, c.executionCtx).changed();
     log("meals_delete_ok", { id });
     return c.json({ ok: true });
   } catch (err) {
@@ -260,6 +278,7 @@ api.post("/meals/reorder", async (c) => {
   );
   try {
     await setPositions(c.env.DB, valid);
+    if (valid.length > 0) effects(c.env, c.executionCtx).changed();
     log("meals_reorder_ok", { count: valid.length });
     return c.json({ ok: true });
   } catch (err) {
@@ -273,6 +292,9 @@ api.post("/meals/reorder", async (c) => {
 api.get("/dishes", async (c) => {
   try {
     const dishes = await listDishes(c.env.DB);
+    // Fill in previews for links saved before previews existed, a few at a time.
+    const fx = effects(c.env, c.executionCtx);
+    for (const id of await dishesNeedingPreview(c.env.DB, 3)) fx.refreshPreview(id);
     log("dishes_get_ok", { count: dishes.length });
     return c.json({ dishes });
   } catch (err) {
@@ -287,6 +309,9 @@ api.patch("/dishes/:id", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as DishPatch;
   try {
     const dish = await updateDish(c.env.DB, id, body);
+    const fx = effects(c.env, c.executionCtx);
+    fx.changed();
+    if (body.recipe_url !== undefined && dish.recipe_url) fx.refreshPreview(dish.id);
     log("dish_patch_ok", { id });
     return c.json({ dish });
   } catch (err) {
@@ -335,8 +360,17 @@ app.get("/widget", async (c) => {
 
 // OAuth consent page for MCP clients such as Claude.
 app.on(["GET", "POST"], "/authorize", (c) =>
-  handleAuthorize(c.req.raw, c.env.OAUTH_PROVIDER, c.env.APP_PASSWORD),
+  handleAuthorize(c.req.raw, c.env.OAUTH_PROVIDER, c.env.APP_PASSWORD, loginLimiter(c.env)),
 );
+
+// Live updates: a WebSocket that receives {"type":"changed"} whenever the
+// plan changes. It carries no data, so like the widget it needs no login.
+app.get("/live", (c) => {
+  if (c.req.header("Upgrade")?.toLowerCase() !== "websocket") {
+    return c.text("Expected a WebSocket upgrade", 426);
+  }
+  return liveStub(c.env).fetch(c.req.raw);
+});
 
 // Everything else: serve the static SPA assets.
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
@@ -344,10 +378,10 @@ app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 // --- MCP, behind OAuth --------------------------------------------------
 
 const mcpHandler = {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const start = Date.now();
     try {
-      const response = await handleMcp(request, env.DB);
+      const response = await handleMcp(request, env.DB, effects(env, ctx));
       log("mcp", { method: request.method, status: response.status, ms: Date.now() - start });
       return response;
     } catch (err) {
@@ -384,6 +418,8 @@ function oauthProvider(env: Env): OAuthProvider<Env> {
   }
   return provider.instance;
 }
+
+export { LiveUpdates, LoginLimiter } from "./durable";
 
 export default {
   fetch(request, env, ctx) {

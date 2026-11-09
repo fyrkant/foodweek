@@ -6,8 +6,9 @@
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-const MEAL_COLUMNS = "m.id, m.date, m.dish_id, d.name, d.recipe_url, d.notes, m.sort_order";
-const DISH_COLUMNS = "id, name, recipe_url, notes";
+const MEAL_COLUMNS =
+  "m.id, m.date, m.dish_id, d.name, d.recipe_url, d.notes, d.recipe_title, d.recipe_image, m.sort_order";
+const DISH_COLUMNS = "id, name, recipe_url, notes, recipe_title, recipe_image";
 const MAX_NAME = 200;
 const MAX_URL = 2000;
 const MAX_NOTES = 4000;
@@ -26,6 +27,9 @@ export interface DishRow {
   name: string;
   recipe_url: string | null;
   notes: string | null;
+  /** Fetched from the recipe page; see preview.ts. */
+  recipe_title: string | null;
+  recipe_image: string | null;
 }
 
 export interface MealRow extends Omit<DishRow, "id"> {
@@ -115,6 +119,8 @@ export async function addMeal(db: D1Database, date: string, choice: DishChoice):
     name: dish.name,
     recipe_url: dish.recipe_url,
     notes: dish.notes,
+    recipe_title: dish.recipe_title,
+    recipe_image: dish.recipe_image,
     sort_order: sortOrder,
   };
 }
@@ -196,7 +202,7 @@ export async function searchDishes(
   const like = `%${query.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   const { results } = await db
     .prepare(
-      `SELECT d.id, d.name, d.recipe_url, d.notes,
+      `SELECT d.id, d.name, d.recipe_url, d.notes, d.recipe_title, d.recipe_image,
               COUNT(m.id) AS times_planned, MAX(m.date) AS last_planned
        FROM dishes d LEFT JOIN meals m ON m.dish_id = d.id
        WHERE d.name LIKE ? ESCAPE '\\'
@@ -207,6 +213,22 @@ export async function searchDishes(
     .bind(like, limit)
     .all<DishSummary>();
   return results;
+}
+
+/** Dishes with a recipe link whose preview was never fetched, or failed over a week ago. */
+export async function dishesNeedingPreview(db: D1Database, limit: number): Promise<string[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT id FROM dishes
+       WHERE recipe_url IS NOT NULL
+         AND (recipe_checked_at IS NULL
+              OR (recipe_image IS NULL AND recipe_title IS NULL
+                  AND recipe_checked_at < datetime('now', '-7 days')))
+       LIMIT ?`,
+    )
+    .bind(limit)
+    .all<{ id: string }>();
+  return results.map((r) => r.id);
 }
 
 /** Updates a dish. Fields left out are unchanged; an empty recipe_url/notes clears it. */
@@ -230,7 +252,13 @@ export async function updateDish(db: D1Database, id: string, patch: DishPatch): 
       if (!normalized) throw new InputError("Länken måste börja med http:// eller https://");
       url = normalized;
     }
-    sets.push("recipe_url = ?");
+    // A new link needs a new preview.
+    sets.push(
+      "recipe_url = ?",
+      "recipe_title = NULL",
+      "recipe_image = NULL",
+      "recipe_checked_at = NULL",
+    );
     values.push(url);
   }
   if (patch.notes !== undefined) {
