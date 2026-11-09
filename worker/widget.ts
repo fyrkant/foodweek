@@ -70,6 +70,28 @@ function accentCss(hex: string): string {
   return `:root {\n  --accent: #${hex};\n  --today: rgba(${r}, ${g}, ${b}, 0.18);\n}`;
 }
 
+/**
+ * Reloads the page when the plan changes. The meta refresh stays as a
+ * fallback for when the socket can't connect.
+ */
+const LIVE_RELOAD = `(function () {
+  var socket, backoff = 1000, pending;
+  function connect() {
+    try {
+      socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/live");
+    } catch (e) { return; }
+    socket.onopen = function () { backoff = 1000; };
+    socket.onmessage = function (e) {
+      if (e.data === "pong") return;
+      clearTimeout(pending);
+      pending = setTimeout(function () { location.reload(); }, 400);
+    };
+    socket.onclose = function () { setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 30000); };
+  }
+  setInterval(function () { if (socket && socket.readyState === 1) socket.send("ping"); }, 30000);
+  connect();
+})();`;
+
 function themeCss(theme: WidgetTheme): string {
   if (theme === "light") return `:root {${LIGHT}\n}`;
   if (theme === "dark") return `:root {${DARK}\n}`;
@@ -227,6 +249,7 @@ a.dinner:active { opacity: 0.6; }
 <ul>
 ${rows}
 </ul>
+<script>${LIVE_RELOAD}</script>
 </body>
 </html>
 `;

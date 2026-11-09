@@ -30,6 +30,9 @@ export default function MealCard({
       >
         ⋮⋮
       </button>
+      {meal.recipe_image && (
+        <img className="meal-thumb" src={meal.recipe_image} alt="" loading="lazy" referrerPolicy="no-referrer" />
+      )}
       <button className="meal-name" onClick={() => onEdit(meal)} title="Visa och redigera">
         {meal.name}
         {meal.notes && <span className="meal-notes">{meal.notes}</span>}

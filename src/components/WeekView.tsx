@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -25,6 +25,7 @@ import {
 } from "../dates";
 import DayColumn from "./DayColumn";
 import DishSheet from "./DishSheet";
+import { useLiveUpdates } from "../live";
 
 type MealsByDay = Record<DateStr, Meal[]>;
 
@@ -76,12 +77,38 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
     loadWeek();
   }, [loadWeek]);
 
-  useEffect(() => {
+  const loadDishes = useCallback(() => {
     api
       .getDishes()
       .then((r) => setSuggestions(r.dishes))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    loadDishes();
+  }, [loadDishes]);
+
+  // Refetch when something changes elsewhere (another device, the widget's
+  // data, Claude). Wait until a drag is over so the list doesn't jump.
+  const dragging = useRef(false);
+  const missedUpdate = useRef(false);
+  const refresh = useCallback(() => {
+    if (dragging.current) {
+      missedUpdate.current = true;
+      return;
+    }
+    loadWeek();
+    loadDishes();
+  }, [loadWeek, loadDishes]);
+  useLiveUpdates(refresh);
+
+  const dragFinished = () => {
+    dragging.current = false;
+    if (missedUpdate.current) {
+      missedUpdate.current = false;
+      refresh();
+    }
+  };
 
   const activeMeal = useMemo(() => {
     if (!activeId) return null;
@@ -100,6 +127,7 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
   }
 
   function handleDragStart(e: DragStartEvent) {
+    dragging.current = true;
     setActiveId(String(e.active.id));
   }
 
@@ -136,6 +164,7 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
   function handleDragEnd(e: DragEndEvent) {
     const { active, over } = e;
     setActiveId(null);
+    dragFinished();
     if (!over) return;
 
     const from = findContainer(String(active.id));
@@ -173,7 +202,14 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
         prev.some((s) => s.id === meal.dish_id)
           ? prev
           : [
-              { id: meal.dish_id, name: meal.name, recipe_url: meal.recipe_url, notes: meal.notes },
+              {
+                id: meal.dish_id,
+                name: meal.name,
+                recipe_url: meal.recipe_url,
+                notes: meal.notes,
+                recipe_title: meal.recipe_title,
+                recipe_image: meal.recipe_image,
+              },
               ...prev,
             ],
       );
@@ -183,12 +219,25 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
   }
 
   function handleEdit(meal: Meal) {
-    setEditing({ id: meal.dish_id, name: meal.name, recipe_url: meal.recipe_url, notes: meal.notes });
+    setEditing({
+      id: meal.dish_id,
+      name: meal.name,
+      recipe_url: meal.recipe_url,
+      notes: meal.notes,
+      recipe_title: meal.recipe_title,
+      recipe_image: meal.recipe_image,
+    });
   }
 
   async function handleSaveDish(id: string, patch: DishPatch) {
     const { dish } = await api.updateDish(id, patch);
-    const details = { name: dish.name, recipe_url: dish.recipe_url, notes: dish.notes };
+    const details = {
+      name: dish.name,
+      recipe_url: dish.recipe_url,
+      notes: dish.notes,
+      recipe_title: dish.recipe_title,
+      recipe_image: dish.recipe_image,
+    };
     setByDay((cur) => {
       const copy: MealsByDay = {};
       for (const d of days) {
@@ -256,7 +305,10 @@ export default function WeekView({ onLogout }: { onLogout: () => void }) {
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
-        onDragCancel={() => setActiveId(null)}
+        onDragCancel={() => {
+          setActiveId(null);
+          dragFinished();
+        }}
       >
         <div className="week-grid">
           {days.map((d) => (

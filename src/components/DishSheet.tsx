@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dish, DishPatch } from "../api";
 
+function hostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 /**
  * Modal for editing a dish's details. Changes apply to the dish itself,
  * so they show up on every day it's planned.
@@ -68,8 +76,14 @@ export default function DishSheet({
           />
         </label>
         {dish.recipe_url && dish.recipe_url === recipeUrl.trim() && (
-          <a className="sheet-open" href={dish.recipe_url} target="_blank" rel="noopener noreferrer">
-            Öppna recept ↗
+          <a className="recipe-preview" href={dish.recipe_url} target="_blank" rel="noopener noreferrer">
+            {dish.recipe_image && (
+              <img src={dish.recipe_image} alt="" referrerPolicy="no-referrer" />
+            )}
+            <span className="recipe-preview-text">
+              <strong>{dish.recipe_title ?? "Öppna recept"}</strong>
+              <span className="muted">{hostname(dish.recipe_url)} ↗</span>
+            </span>
           </a>
         )}
         <label>
