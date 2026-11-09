@@ -28,6 +28,7 @@ are highlighted on each day.
   and styled.
 - Read-only **calendar feed** (ICS) so the plan shows up in Home Assistant or a
   phone calendar.
+- **MCP server** (`/mcp`) so Claude can read and plan dinners, behind OAuth.
 - Read-only **widget page** (`/widget`) with this week's dinners, made for
   embedding in a Home Assistant dashboard.
 
@@ -137,11 +138,54 @@ The same URL works as a calendar subscription on a phone or in Google
 Calendar. The feed is public and read-only: anyone with the URL can see the
 dinner list, but changing anything still requires logging in.
 
+## Planning with Claude (MCP)
+
+The Worker serves a remote MCP server at `/mcp`. To connect it, in Claude go to
+**Settings → Connectors → Add custom connector** and enter
+`https://<your-worker-domain>/mcp`. Claude opens an approval page from the app;
+enter the app password (`APP_PASSWORD`) and click **Tillåt**.
+
+Tools:
+
+| Tool | What it does |
+| --- | --- |
+| `get_week` | Dinners for a week (Mon–Sun), with Swedish holidays |
+| `get_recent_dinners` | What's been eaten lately, and the most common dishes |
+| `search_dishes` | Known dishes with recipe link, notes, times and last planned |
+| `plan_dinner` | Plan a dish on a date, by `dish_id` or by name |
+| `move_dinner` | Move a dinner to another date or position |
+| `remove_dinner` | Remove a planned dinner |
+| `update_dish` | Rename a dish or set its recipe link and notes |
+
+Sign-in uses [`@cloudflare/workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider)
+(OAuth 2.1 with PKCE, dynamic client registration and client ID metadata
+documents). Grants and tokens are stored, hashed, in the `OAUTH_KV` namespace.
+`PUBLIC_URL` in `wrangler.jsonc` must be the Worker's public origin: tokens are
+issued for `PUBLIC_URL/mcp`. Change it if you move to a custom domain.
+
+To set up KV on a fresh deployment:
+
+```bash
+npx wrangler kv namespace create foodweek-oauth   # put the id under kv_namespaces in wrangler.jsonc
+```
+
+For local testing over HTTPS (the OAuth metadata is only served on the
+`https` origin in `PUBLIC_URL`):
+
+```bash
+npm run build
+echo 'PUBLIC_URL="https://localhost:5443"' >> dist/foodweek/.dev.vars   # plus APP_PASSWORD etc.
+npx wrangler dev -c dist/foodweek/wrangler.json --local-protocol https --upstream-protocol https --port 5443
+```
+
 ## Project layout
 
 ```
 worker/            Cloudflare Worker (Hono API + static asset serving)
-  index.ts         Routes: /api/login, /api/meals, /api/dishes, ...
+  index.ts         Routes, OAuth provider wiring, static assets
+  db.ts            Meal and dish operations shared by the API and MCP
+  mcp.ts           MCP server and tools
+  oauth.ts         OAuth consent page (approve with the app password)
   auth.ts          Signed-cookie session helpers (Web Crypto HMAC)
   ical.ts          iCalendar writer for the calendar feed
   widget.ts        Server-rendered week widget for dashboards
